@@ -1,0 +1,46 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import logging
+from .api.endpoints import router
+from .services.scheduler import start_scheduler, stop_scheduler
+from .core.database import get_database
+from .core.utils import config
+
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    db = get_database()
+    await db.connect(config.DATABASE_URL)
+    await start_scheduler()
+    
+    yield
+    
+    # Shutdown
+    await stop_scheduler()
+    await db.disconnect()
+
+
+app = FastAPI(
+    title="Baby Monitor API",
+    version="0.1.0",
+    description="Backend for baby sleep & room monitoring (Sprint 1 skeleton).",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router, tags=["monitoring"])
+
