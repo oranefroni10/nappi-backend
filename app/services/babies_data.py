@@ -34,20 +34,7 @@ class BabyDataManager:
         heart_rate: Optional[float] = None,
         sleep_quality_score: Optional[int] = None
     ) -> Optional[SleepRealtimeData]:
-        """
-        Insert new sensor reading for a baby into sleep_realtime_data table.
-        
-        Args:
-            baby_id: ID of the baby
-            temp_celcius: Temperature in Celsius
-            humidity: Humidity percentage
-            noise_decibel: Noise level in decibels
-            heart_rate: Heart rate in BPM
-            sleep_quality_score: Sleep quality score (0-100)
-            
-        Returns:
-            SleepRealtimeData object if successful, None otherwise
-        """
+
         try:
             async with self.database.session() as session:
                 result = await session.execute(

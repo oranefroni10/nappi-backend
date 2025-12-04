@@ -7,6 +7,27 @@ from typing import Optional
 from decimal import Decimal
 
 
+class User(BaseModel):
+    """Represents the Nappi.users table"""
+    id: Optional[int] = None
+    username: str
+    password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    baby_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BabyResponse(BaseModel):
+    """Baby data for API responses"""
+    id: int
+    first_name: str
+    last_name: str
+    birthdate: date
+
+
 class AwakeningEvents(BaseModel):
     """
     Represents the Nappi.awakening_events table
