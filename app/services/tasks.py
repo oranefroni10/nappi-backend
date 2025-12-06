@@ -1,26 +1,122 @@
 import asyncio
 import logging
-from typing import List, Optional, Dict, Any
-from .data_miner import SensorDataSource
+from typing import Dict, Any
+from .data_miner import HttpSensorSource
+from .babies_data import BabyDataManager
+from app.core.utils import SENSOR_TO_ENDPOINT_MAP, SENSOR_TO_DB_COLUMN_MAP
+from app.db.models import Babies
 
 logger = logging.getLogger(__name__)
 
 
-async def collect_sensor_data_task(
-    data_source: SensorDataSource,
-    sensor_names: List[str]
-) -> List[Optional[Dict[str, Any]]]:
+async def collect_and_store_baby_sensor_data_task(
+    data_source: HttpSensorSource
+) -> Dict[str, Any]:
 
-    logger.info("Starting sensor data collection task...")
+    logger.info("Starting baby sensor data collection and storage task...")
+    
+    baby_manager = BabyDataManager()
+    
+    try:
+        # 1. Get all babies from database
+        babies = await baby_manager.get_babies_list()
+        
+        if not babies:
+            logger.warning("No babies found in database")
+            return {"success": 0, "failed": 0, "total": 0, "message": "No babies found"}
+        
+        logger.info(f"Found {len(babies)} baby/babies to monitor")
+        
+        # 2. Process ALL babies in PARALLEL for maximum speed
+        baby_tasks = [
+            asyncio.create_task(_process_single_baby(baby, data_source, baby_manager))
+            for baby in babies
+        ]
+        
+        # Wait for all babies to complete (timeout handled per-sensor in data_miner)
+        results = await asyncio.gather(*baby_tasks, return_exceptions=True)
+        
+        # 3. Count successes and failures
+        success_count = sum(1 for r in results if r is True)
+        failed_count = sum(1 for r in results if r is not True)
+        
+        summary = {
+            "success": success_count,
+            "failed": failed_count,
+            "total": len(babies)
+        }
+        
+        logger.info(
+            f"✅ Sensor data collection complete: {success_count}/{len(babies)} successful, "
+            f"{failed_count} failed"
+        )
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Fatal error in sensor data collection task: {e}", exc_info=True)
+        return {"success": 0, "failed": 0, "total": 0, "error": str(e)}
 
-    tasks = [
-        asyncio.create_task(data_source.get_sensor_data(sensor))
-        for sensor in sensor_names
-    ]
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+async def _process_single_baby(
+    baby: Babies,
+    data_source: HttpSensorSource,
+    baby_manager: BabyDataManager
+) -> bool:
 
-    successful = sum(1 for r in results if r is not None and not isinstance(r, Exception))
-    logger.info(f"Sensor data collection complete: {successful}/{len(results)} successful")
-
-    return results
+    try:
+        logger.debug(f"Collecting sensor data for baby {baby.id} ({baby.first_name})")
+        
+        # Fetch all sensor data concurrently (temperature, humidity, noise, heart_rate)
+        sensor_names = list(SENSOR_TO_ENDPOINT_MAP.keys())
+        sensor_tasks = [
+            asyncio.create_task(data_source.get_sensor_data(sensor, baby.id))
+            for sensor in sensor_names
+        ]
+        
+        # Wait for all sensors (returns None for failed sensors)
+        sensor_results = await asyncio.gather(*sensor_tasks, return_exceptions=True)
+        
+        # Build the data dictionary mapping sensor data to DB columns
+        sensor_data = {}
+        for sensor_name, result in zip(sensor_names, sensor_results):
+            if result and not isinstance(result, Exception):
+                # Map sensor name to DB column name
+                db_column = SENSOR_TO_DB_COLUMN_MAP.get(sensor_name)
+                if db_column and isinstance(result, dict) and "value" in result:
+                    sensor_data[db_column] = result["value"]
+                else:
+                    logger.warning(
+                        f"Invalid response format for {sensor_name} (baby {baby.id}): {result}"
+                    )
+            else:
+                logger.warning(
+                    f"Failed to get {sensor_name} for baby {baby.id}: "
+                    f"{result if isinstance(result, Exception) else 'No data'}"
+                )
+        
+        # Only insert if we got at least some sensor data
+        if sensor_data:
+            # Insert into database
+            inserted = await baby_manager.insert_sleep_realtime_data(
+                baby_id=baby.id,
+                **sensor_data
+            )
+            
+            if inserted:
+                logger.info(
+                    f"✅ Stored sensor data for baby {baby.id} ({baby.first_name}): "
+                    f"{len(sensor_data)}/{len(sensor_names)} sensors"
+                )
+                return True
+            else:
+                logger.error(f"❌ Failed to store data in DB for baby {baby.id}")
+                return False
+        else:
+            logger.warning(
+                f"⚠️ No sensor data collected for baby {baby.id} - all sensors failed"
+            )
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Error processing baby {baby.id}: {e}", exc_info=True)
+        return False
