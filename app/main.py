@@ -3,12 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 from .api.endpoints import router
+from .api.auth import router as auth_router
 from .services.scheduler import start_scheduler, stop_scheduler
 from .core.database import get_database
-from .core.utils import config
+from .core.settings import settings
 
 logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
+    level=getattr(logging, settings.LOG_LEVEL),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
@@ -17,7 +18,7 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     # Startup
     db = get_database()
-    await db.connect(config.DATABASE_URL)
+    await db.connect(settings.DATABASE_URL)
     await start_scheduler()
     
     yield
@@ -36,11 +37,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.CORS_ORIGINS,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(router, tags=["monitoring"])
 
