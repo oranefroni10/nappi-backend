@@ -6,14 +6,12 @@ Run this to regenerate models when the database schema changes
 import asyncio
 import asyncpg
 from pathlib import Path
-
+from app.core.settings import settings
 async def generate_pydantic_models():
     """Generate Pydantic models from database schema"""
     
     # Connect to database
-    conn = await asyncpg.connect(
-        "postgresql://neondb_owner:npg_lG3wjsa8ehJB@ep-curly-haze-agmyypt9-pooler.c-2.eu-central-1.aws.neon.tech/neondb"
-    )
+    conn = await asyncpg.connect(settings.DATABASE_URL,)
     
     try:
         # Get all tables in the Nappi schema
