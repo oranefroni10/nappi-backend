@@ -10,8 +10,9 @@ from app.core.settings import settings
 async def generate_pydantic_models():
     """Generate Pydantic models from database schema"""
     
-    # Connect to database
-    conn = await asyncpg.connect(settings.DATABASE_URL,)
+    # Connect to database (strip +asyncpg from SQLAlchemy DSN format)
+    db_url = settings.DATABASE_URL.replace("+asyncpg", "")
+    conn = await asyncpg.connect(db_url)
     
     try:
         # Get all tables in the Nappi schema
@@ -110,9 +111,9 @@ async def generate_pydantic_models():
             output.append("        }")
             output.append("\n")
         
-        # Write to file
-        output_path = Path('models.py')
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to file (same directory as this script)
+        script_dir = Path(__file__).parent
+        output_path = script_dir / 'models.py'
         
         with open(output_path, 'w') as f:
             f.write('\n'.join(output))
