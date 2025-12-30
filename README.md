@@ -13,6 +13,9 @@ Backend API for baby sleep and room monitoring system. This FastAPI application 
 - [Configuration](#configuration)
 - [Running the Application](#running-the-application)
 - [API Endpoints](#api-endpoints)
+- [Smart Features](#smart-features)
+- [Database Tables](#database-tables)
+- [Scheduled Jobs](#scheduled-jobs)
 - [Development](#development)
 - [Current Status](#current-status)
 - [Troubleshooting](#troubleshooting)
@@ -24,11 +27,13 @@ Backend API for baby sleep and room monitoring system. This FastAPI application 
 **Nappi** is a baby monitoring system that:
 - Tracks sleep patterns and quality
 - Monitors room environment (temperature, humidity, noise, light)
-- Collects data from IoT sensors
+- Collects data from IoT sensors (M5 devices)
+- Analyzes awakening correlations with AI-powered insights
+- Learns optimal sleep conditions for each baby
 - Provides REST API for frontend applications
 - Runs background tasks for continuous monitoring
 
-**Current Phase**: Sprint 1 - MVP Skeleton
+**Current Phase**: Sprint 2 - Smart Features
 
 ---
 
@@ -40,6 +45,7 @@ Backend API for baby sleep and room monitoring system. This FastAPI application 
 - **Background Jobs**: [APScheduler](https://apscheduler.readthedocs.io/)
 - **HTTP Client**: [aiohttp](https://docs.aiohttp.org/)
 - **Data Validation**: [Pydantic](https://docs.pydantic.dev/) v2
+- **AI Insights**: [Google Gemini](https://ai.google.dev/) - For awakening correlation analysis
 
 ---
 
@@ -51,17 +57,29 @@ backend/
 │   ├── main.py                  # FastAPI application entry point
 │   │
 │   ├── api/                     # API Layer
-│   │   ├── endpoints.py        # REST API routes
-│   │   └── models.py           # Pydantic request/response models
+│   │   ├── endpoints.py         # REST API routes (monitoring)
+│   │   ├── sensor_events.py     # Sensor event endpoints (sleep start/end)
+│   │   ├── auth.py              # Authentication routes
+│   │   └── models.py            # Pydantic request/response models
 │   │
 │   ├── core/                    # Core Infrastructure
-│   │   ├── database.py         # Database connection manager
-│   │   └── utils.py            # Configuration and constants
+│   │   ├── database.py          # Database connection manager
+│   │   ├── settings.py          # Configuration settings
+│   │   └── utils.py             # Constants and utilities
+│   │
+│   ├── db/                      # Database Layer
+│   │   ├── models.py            # Pydantic models for DB tables
+│   │   └── generate_models.py   # Script to generate models from DB
 │   │
 │   └── services/                # Background Services
-│       ├── data_miner.py       # Sensor data collection
-│       ├── scheduler.py        # Task scheduler
-│       └── tasks.py            # Background tasks
+│       ├── scheduler.py         # Task scheduler (APScheduler)
+│       ├── tasks.py             # Sensor collection tasks
+│       ├── data_miner.py        # HTTP client for sensors
+│       ├── babies_data.py       # Database operations
+│       ├── sleep_state.py       # In-memory sleep state tracking
+│       ├── correlation_analyzer.py  # Awakening correlation analysis
+│       ├── daily_summary.py     # Daily summary generation
+│       └── optimal_stats.py     # Optimal conditions calculator
 │
 ├── requirements.txt             # Python dependencies
 └── README.md                    # This file
@@ -72,13 +90,18 @@ backend/
 | File | Purpose |
 |------|---------|
 | `main.py` | Application initialization, middleware, lifespan events |
-| `api/endpoints.py` | REST API route definitions |
+| `api/endpoints.py` | REST API route definitions (monitoring) |
+| `api/sensor_events.py` | M5 sensor event handlers (sleep start/end/away) |
 | `api/models.py` | Pydantic schemas for API requests/responses |
 | `core/database.py` | Singleton database manager with connection pooling |
-| `core/utils.py` | Configuration and environment variables |
-| `services/data_miner.py` | HTTP client for fetching sensor data |
-| `services/scheduler.py` | APScheduler setup and management |
-| `services/tasks.py` | Background task implementations |
+| `core/settings.py` | Configuration settings and environment variables |
+| `services/scheduler.py` | APScheduler setup and job management |
+| `services/tasks.py` | Sensor data collection task |
+| `services/babies_data.py` | Database operations for babies and sleep data |
+| `services/sleep_state.py` | In-memory tracking of which babies are sleeping |
+| `services/correlation_analyzer.py` | Analyzes sensor changes before awakenings |
+| `services/daily_summary.py` | Daily aggregation and cleanup |
+| `services/optimal_stats.py` | Calculates optimal sleep conditions |
 
 ---
 
@@ -145,6 +168,17 @@ PORT=8000
 SENSOR_API_BASE_URL=http://your-sensor-device:8080
 SENSOR_POLL_INTERVAL_SECONDS=5
 
+# AI Insights (optional - get key from https://ai.google.dev/)
+GEMINI_API_KEY=your_gemini_api_key
+
+# Correlation Analysis
+CORRELATION_CHANGE_THRESHOLD_PERCENT=10
+CORRELATION_TIME_WINDOW_MINUTES=60
+
+# Daily Jobs (Israel timezone)
+DAILY_SUMMARY_HOUR=10
+DAILY_SUMMARY_TIMEZONE=Asia/Jerusalem
+
 # Logging
 LOG_LEVEL=INFO
 ```
@@ -159,11 +193,16 @@ Configuration is managed in `app/core/utils.py` and loaded from environment vari
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/nappi` | PostgreSQL connection string |
+| `DATABASE_URL` | - | PostgreSQL connection string |
 | `HOST` | `0.0.0.0` | Server host |
 | `PORT` | `8000` | Server port |
-| `SENSOR_API_BASE_URL` | `http://localhost:8000` | Base URL for sensor API |
+| `SENSOR_API_BASE_URL` | `http://localhost:8001` | Base URL for sensor hub |
 | `SENSOR_POLL_INTERVAL_SECONDS` | `5` | How often to poll sensors (seconds) |
+| `GEMINI_API_KEY` | - | Google Gemini API key for AI insights |
+| `CORRELATION_CHANGE_THRESHOLD_PERCENT` | `10` | Min % change to flag as significant |
+| `CORRELATION_TIME_WINDOW_MINUTES` | `60` | Time window to analyze before awakening |
+| `DAILY_SUMMARY_HOUR` | `10` | Hour to run daily jobs (24h format) |
+| `DAILY_SUMMARY_TIMEZONE` | `Asia/Jerusalem` | Timezone for daily jobs |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 
 ### Sensor Configuration
@@ -212,6 +251,16 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 | `GET` | `/docs` | Interactive API documentation | ✅ Built-in |
 | `GET` | `/redoc` | Alternative API documentation | ✅ Built-in |
 
+### Sensor Events (M5 sensors call these)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/sensor/sleep-start` | Baby fell asleep → start collecting sensor data |
+| `POST` | `/sensor/sleep-end` | Baby woke up → stop collecting, save event, run AI analysis |
+| `POST` | `/sensor/baby-away` | Baby left crib → stop collecting (no awakening event) |
+| `GET` | `/sensor/sleep-status/{id}` | Check if specific baby is sleeping |
+| `GET` | `/sensor/sleeping-babies` | List all currently sleeping babies |
+
 ### Sleep Monitoring
 
 | Method | Endpoint | Description | Status |
@@ -254,6 +303,82 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
   "notes": "Room is quiet and slightly dark."
 }
 ```
+
+---
+
+## 🧠 Smart Features
+
+### 1. Correlation Analysis
+**When:** Triggered every time a baby wakes up
+
+- Looks at the last 60 minutes of sensor data before awakening
+- Compares first 25% of readings vs last 25% of readings
+- Calculates percentage change for each sensor (temp, humidity, noise, heart rate)
+- Only keeps changes ≥10% (significant changes)
+- **Stored in:** `correlations.parameters`
+
+### 2. Gemini AI Insights
+**When:** Right after correlation analysis
+
+- Sends significant sensor changes to Google Gemini AI
+- AI analyzes what likely caused the awakening
+- Returns 2-3 sentence explanation with actionable advice for parents
+- **Stored in:** `correlations.extra_data`
+
+### 3. Optimal Conditions Calculator
+**When:** Daily at 10:05 AM
+
+- Looks at ALL historical daily summaries for each baby
+- Gives each day a weight based on sleep quality (fewer awakenings = higher weight)
+- Calculates weighted average for temperature, humidity, and noise
+- Result = conditions that historically worked best for that baby
+- **Stored in:** `optimal_stats` (one row per baby, updated daily)
+
+**Formula:**
+```
+weight = 1 / (1 + total_awakenings)
+
+optimal_value = Σ(value × weight) / Σ(weight)
+```
+
+**Example:**
+| Day | Temp | Awakenings | Weight | Temp × Weight |
+|-----|------|------------|--------|---------------|
+| Mon | 22°C | 0 | 1.00 | 22.00 |
+| Tue | 25°C | 2 | 0.33 | 8.25 |
+| Wed | 23°C | 1 | 0.50 | 11.50 |
+| **Sum** | | | **1.83** | **41.75** |
+| **Optimal** | **22.8°C** | | | 41.75 ÷ 1.83 |
+
+---
+
+## 🗄️ Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `users` | User accounts |
+| `babies` | Baby profiles |
+| `sleep_realtime_data` | Raw sensor readings (deleted daily after summary) |
+| `awakening_events` | When baby woke up + metadata |
+| `correlations` | What changed before awakening + AI insights |
+| `daily_summary` | Daily averages + morning/noon/night awakening counts |
+| `optimal_stats` | Best conditions per baby (one row each, updated daily) |
+
+### Awakening Time Periods
+
+- **Morning** — 6am to 12pm
+- **Noon** — 12pm to 6pm
+- **Night** — 6pm to 6am
+
+---
+
+## ⏰ Scheduled Jobs
+
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| **Sensor Collection** | Every 5 seconds | Collects data for sleeping babies only |
+| **Daily Summary** | 10:00 AM Israel | Generates summaries, cleans up raw data |
+| **Optimal Stats** | 10:05 AM Israel | Calculates optimal conditions |
 
 ---
 
@@ -340,19 +465,22 @@ pytest --cov=app tests/
 
 - [x] FastAPI application structure
 - [x] Async database connection manager
-- [x] Background task scheduler
+- [x] Background task scheduler (APScheduler)
 - [x] Sensor data collection (HTTP polling)
 - [x] CORS middleware for frontend
-- [x] Mock API endpoints for sleep and room data
 - [x] Proper application lifecycle (startup/shutdown)
 - [x] Logging infrastructure
+- [x] **Sleep state tracking** (in-memory, event-driven)
+- [x] **M5 sensor endpoints** (sleep-start, sleep-end, baby-away)
+- [x] **Awakening events** recording with metadata
+- [x] **Correlation analysis** (sensor change detection)
+- [x] **Gemini AI integration** for insights
+- [x] **Daily summary generation** with awakening counts
+- [x] **Optimal stats calculation** with weighted averages
+- [x] **Database operations** for all features
 
 ### 🚧 In Progress / TODO
 
-- [ ] **Database Integration**: ORM models and data persistence
-- [ ] **Real Endpoints**: Connect endpoints to database queries
-- [ ] **Store Sensor Data**: Save collected sensor data to database
-- [ ] **Sleep Tracking Logic**: Implement actual sleep analysis
 - [ ] **Authentication**: Add JWT-based authentication
 - [ ] **Health Check Endpoint**: Add `/health` endpoint
 - [ ] **Database Migrations**: Setup Alembic
@@ -362,11 +490,9 @@ pytest --cov=app tests/
 
 ### ⚠️ Known Issues
 
-1. **Mock Data Only**: Endpoints return hardcoded data, not from database
-2. **Deprecated datetime**: Using `datetime.utcnow()` (deprecated in Python 3.12+)
-3. **Sensor Data Not Stored**: Collected data is logged but not persisted
-4. **No Authentication**: API is open to all requests
-5. **Sensor API Configuration**: Default points to same host (needs external sensor API)
+1. **No Authentication**: API is open to all requests (sensor endpoints don't require auth)
+2. **Gemini Rate Limits**: Free tier has quota limits, system falls back gracefully
+3. **SSL on macOS**: May need to install certificates (`pip install certifi`)
 
 ---
 
@@ -410,6 +536,21 @@ pip install -r requirements.txt
 1. Check logs for scheduler initialization
 2. Verify `SENSOR_API_BASE_URL` is correct
 3. Ensure external sensor API is running and accessible
+4. Check that baby is marked as "sleeping" via `/sensor/sleep-start`
+
+### Issue: Gemini API errors
+
+**Error**: `429 Rate Limit` or `SSL Certificate errors`
+
+**Solution**:
+```bash
+# For SSL errors on macOS
+pip install certifi
+
+# For rate limits - the system automatically tries fallback models
+# Check logs for: "Rate limit on [model], trying next model..."
+# If all models exhausted, correlation is still saved without AI insights
+```
 
 ### Issue: CORS errors from frontend
 
@@ -433,6 +574,7 @@ CORS_ORIGINS: list = [
 - **SQLAlchemy Async**: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
 - **APScheduler**: https://apscheduler.readthedocs.io/en/3.x/
 - **Pydantic**: https://docs.pydantic.dev/latest/
+- **Google Gemini API**: https://ai.google.dev/
 
 ---
 
@@ -448,11 +590,12 @@ CORS_ORIGINS: list = [
 
 ## 📝 Notes for Team
 
-- **Baby Name**: Currently hardcoded as "Noa" - will be dynamic in future sprints
 - **Environment**: Always use virtual environment for dependencies
 - **Database**: Each developer should have their own local PostgreSQL database
-- **Sensors**: For development, you can mock sensor responses or use a test sensor API
+- **Sensors**: Use the mock sensor hub at `mock_sensor_data/` for development
+- **Gemini API**: Get a free API key from https://ai.google.dev/ (optional, system works without it)
 - **Logs**: Check console output for scheduler activity and sensor polling
+- **Daily Jobs**: Run at 10:00 AM Israel time - adjust `DAILY_SUMMARY_HOUR` if needed
 
 ---
 
