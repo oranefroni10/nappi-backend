@@ -26,3 +26,39 @@ class RoomMetrics(BaseModel):
     light_lux: float
     measured_at: datetime
     notes: Optional[str] = None
+
+
+# ============================================
+# Sensor Event Models (M5 Sleep Detection)
+# ============================================
+
+class SleepEventRequest(BaseModel):
+    """Request body for sleep start/end events from M5 sensor."""
+    baby_id: int
+
+
+class SleepStartResponse(BaseModel):
+    """Response for successful sleep start event."""
+    baby_id: int
+    sleep_started_at: datetime
+    message: str
+
+
+class LastSensorReadings(BaseModel):
+    """Last sensor readings before awakening."""
+    temp_celcius: Optional[float] = None
+    humidity: Optional[float] = None
+    noise_decibel: Optional[float] = None
+    heart_rate: Optional[float] = None
+    recorded_at: Optional[datetime] = None
+
+
+class AwakeningEventResponse(BaseModel):
+    """Response for successful awakening event with full metadata."""
+    baby_id: int
+    event_id: int
+    sleep_started_at: datetime
+    awakened_at: datetime
+    sleep_duration_minutes: float
+    last_sensor_readings: Optional[LastSensorReadings] = None
+    message: str

@@ -26,6 +26,21 @@ class Settings:
     
     # Logging Configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    
+    # Gemini AI Configuration
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    
+    # Correlation Analysis Configuration
+    CORRELATION_CHANGE_THRESHOLD_PERCENT: float = float(
+        os.getenv("CORRELATION_CHANGE_THRESHOLD_PERCENT", "10.0")
+    )
+    CORRELATION_TIME_WINDOW_MINUTES: int = int(
+        os.getenv("CORRELATION_TIME_WINDOW_MINUTES", "60")
+    )
+    
+    # Daily Summary Configuration
+    DAILY_SUMMARY_HOUR: int = int(os.getenv("DAILY_SUMMARY_HOUR", "10"))
+    DAILY_SUMMARY_TIMEZONE: str = os.getenv("DAILY_SUMMARY_TIMEZONE", "Asia/Jerusalem")
 
 
 # Create a single instance to be imported throughout the app

@@ -1,8 +1,9 @@
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from .data_miner import HttpSensorSource
 from .babies_data import BabyDataManager
+from .sleep_state import get_sleep_state_manager
 from app.core.utils import SENSOR_TO_ENDPOINT_MAP, SENSOR_TO_DB_COLUMN_MAP
 from app.db.models import Babies
 
@@ -12,42 +13,71 @@ logger = logging.getLogger(__name__)
 async def collect_and_store_baby_sensor_data_task(
     data_source: HttpSensorSource
 ) -> Dict[str, Any]:
-
-    logger.info("Starting baby sensor data collection and storage task...")
+    """
+    Collect sensor data only for babies that are currently asleep.
+    
+    This task is called periodically by the scheduler. It checks the
+    SleepStateManager for sleeping babies and only collects sensor
+    data for those babies.
+    """
+    logger.debug("Starting baby sensor data collection task...")
     
     baby_manager = BabyDataManager()
+    sleep_state = get_sleep_state_manager()
     
     try:
-        # 1. Get all babies from database
-        babies = await baby_manager.get_babies_list()
+        # 1. Get list of currently sleeping babies
+        sleeping_baby_ids = await sleep_state.get_sleeping_babies()
         
-        if not babies:
-            logger.warning("No babies found in database")
-            return {"success": 0, "failed": 0, "total": 0, "message": "No babies found"}
+        if not sleeping_baby_ids:
+            logger.debug("No babies currently sleeping - skipping data collection")
+            return {
+                "success": 0, 
+                "failed": 0, 
+                "total": 0, 
+                "message": "No babies currently sleeping"
+            }
         
-        logger.info(f"Found {len(babies)} baby/babies to monitor")
+        # 2. Get baby details from database for sleeping babies only
+        all_babies = await baby_manager.get_babies_list()
+        sleeping_babies: List[Babies] = [
+            baby for baby in all_babies if baby.id in sleeping_baby_ids
+        ]
         
-        # 2. Process ALL babies in PARALLEL for maximum speed
+        if not sleeping_babies:
+            logger.warning(
+                f"Sleeping baby IDs {sleeping_baby_ids} not found in database"
+            )
+            return {
+                "success": 0, 
+                "failed": 0, 
+                "total": 0, 
+                "message": "Sleeping babies not found in database"
+            }
+        
+        logger.info(f"Collecting sensor data for {len(sleeping_babies)} sleeping baby/babies")
+        
+        # 3. Process sleeping babies in PARALLEL for maximum speed
         baby_tasks = [
             asyncio.create_task(_process_single_baby(baby, data_source, baby_manager))
-            for baby in babies
+            for baby in sleeping_babies
         ]
         
         # Wait for all babies to complete (timeout handled per-sensor in data_miner)
         results = await asyncio.gather(*baby_tasks, return_exceptions=True)
         
-        # 3. Count successes and failures
+        # 4. Count successes and failures
         success_count = sum(1 for r in results if r is True)
         failed_count = sum(1 for r in results if r is not True)
         
         summary = {
             "success": success_count,
             "failed": failed_count,
-            "total": len(babies)
+            "total": len(sleeping_babies)
         }
         
         logger.info(
-            f"✅ Sensor data collection complete: {success_count}/{len(babies)} successful, "
+            f"✅ Sensor data collection complete: {success_count}/{len(sleeping_babies)} successful, "
             f"{failed_count} failed"
         )
         return summary
