@@ -5,6 +5,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from .tasks import collect_and_store_baby_sensor_data_task
 from .daily_summary import run_daily_summary_job
+from .optimal_stats import run_optimal_stats_job
 from .data_miner import HttpSensorSource
 from ..core.settings import settings
 from ..core.utils import SENSOR_TO_ENDPOINT_MAP
@@ -55,7 +56,7 @@ async def start_scheduler():
         coalesce=True,
     )
 
-    # Job 2: Daily summary generation (runs at 10 AM Israel time)
+    # Job 2: Daily summary generation (runs at 10:00 AM Israel time)
     scheduler.add_job(
         run_daily_summary_job,
         trigger=CronTrigger(
@@ -70,11 +71,27 @@ async def start_scheduler():
         coalesce=True,
     )
 
+    # Job 3: Optimal stats calculation (runs at 10:05 AM Israel time, after daily summary)
+    scheduler.add_job(
+        run_optimal_stats_job,
+        trigger=CronTrigger(
+            hour=settings.DAILY_SUMMARY_HOUR,
+            minute=5,
+            timezone=settings.DAILY_SUMMARY_TIMEZONE
+        ),
+        id="optimal_stats_calculation",
+        name="Calculate optimal stats for all babies",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     scheduler.start()
     logger.info(
         f"Scheduler started successfully:\n"
         f"  - Sensor collection: every {settings.SENSOR_POLL_INTERVAL_SECONDS} seconds\n"
-        f"  - Daily summary: {settings.DAILY_SUMMARY_HOUR}:00 {settings.DAILY_SUMMARY_TIMEZONE}"
+        f"  - Daily summary: {settings.DAILY_SUMMARY_HOUR}:00 {settings.DAILY_SUMMARY_TIMEZONE}\n"
+        f"  - Optimal stats: {settings.DAILY_SUMMARY_HOUR}:05 {settings.DAILY_SUMMARY_TIMEZONE}"
     )
 
 

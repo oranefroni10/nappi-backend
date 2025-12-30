@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from app.core.database import get_database
-from app.db.models import Babies, SleepRealtimeData, AwakeningEvents, Correlations, DailySummary
+from app.db.models import Babies, SleepRealtimeData, AwakeningEvents, Correlations, DailySummary, OptimalStats
 from datetime import date as date_type
 from sqlalchemy import text
 
@@ -392,6 +392,105 @@ class BabyDataManager:
                 f"Failed to delete sleep data for baby {baby_id}: {e}"
             )
             return 0
+
+    # ============================================
+    # Optimal Stats Methods
+    # ============================================
+
+    async def get_all_daily_summaries(
+        self,
+        baby_id: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all daily summaries for a baby (all historical data).
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            List of daily summary dictionaries
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT id, baby_id, avg_humidity, avg_temp, avg_noise,
+                               morning_awakes_sum, noon_awakes_sum, night_awakes_sum,
+                               summary_date
+                        FROM "Nappi"."daily_summary"
+                        WHERE baby_id = :baby_id
+                        ORDER BY summary_date ASC
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get daily summaries for baby {baby_id}: {e}"
+            )
+            return []
+
+    async def upsert_optimal_stats(
+        self,
+        baby_id: int,
+        temperature: Optional[float] = None,
+        humidity: Optional[float] = None,
+        noise: Optional[float] = None,
+        heart_rate: Optional[float] = None
+    ) -> Optional[int]:
+        """
+        Insert or update optimal stats for a baby.
+        
+        If a record exists for the baby, update it. Otherwise, insert a new one.
+        
+        Args:
+            baby_id: The ID of the baby
+            temperature: Optimal temperature
+            humidity: Optimal humidity
+            noise: Optimal noise level
+            heart_rate: Optimal heart rate
+            
+        Returns:
+            The ID of the upserted record, or None if operation failed
+        """
+        try:
+            async with self.database.session() as session:
+                # Use PostgreSQL's INSERT ... ON CONFLICT for upsert
+                result = await session.execute(
+                    text('''
+                        INSERT INTO "Nappi"."optimal_stats" 
+                        (baby_id, temperature, humidity, noise, heart_rate)
+                        VALUES (:baby_id, :temperature, :humidity, :noise, :heart_rate)
+                        ON CONFLICT (baby_id) 
+                        DO UPDATE SET 
+                            temperature = EXCLUDED.temperature,
+                            humidity = EXCLUDED.humidity,
+                            noise = EXCLUDED.noise,
+                            heart_rate = EXCLUDED.heart_rate
+                        RETURNING id
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "temperature": temperature,
+                        "humidity": humidity,
+                        "noise": noise,
+                        "heart_rate": heart_rate
+                    }
+                )
+                await session.commit()
+                row = result.fetchone()
+                if row:
+                    stats_id = row[0]
+                    logger.info(
+                        f"Upserted optimal stats {stats_id} for baby {baby_id}: "
+                        f"temp={temperature}, humidity={humidity}, noise={noise}"
+                    )
+                    return stats_id
+                return None
+        except Exception as e:
+            logger.error(f"Failed to upsert optimal stats for baby {baby_id}: {e}")
+            return None
 
 
 
