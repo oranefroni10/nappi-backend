@@ -104,6 +104,26 @@ class DailySummary(BaseModel):
         }
 
 
+class OptimalStats(BaseModel):
+    """
+    Represents the Nappi.optimal_stats table
+    Stores the optimal environmental conditions for each baby's sleep.
+    """
+    id: int
+    baby_id: Optional[int] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    noise: Optional[float] = None
+    heart_rate: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+            date: lambda v: v.isoformat() if v else None,
+        }
+
+
 class SleepRealtimeData(BaseModel):
     """
     Represents the Nappi.sleep_realtime_data table
