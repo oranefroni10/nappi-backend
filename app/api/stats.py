@@ -5,11 +5,12 @@ Endpoints:
 - GET /stats/sensors - Sensor averages over time (from daily_summary)
 - GET /stats/sleep-patterns - Sleep time patterns with clustering (from awakening_events)
 - GET /stats/daily-sleep - Daily sleep totals (from awakening_events)
+- GET /stats/insights - AI-powered sleep insights from Gemini
 """
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Literal, Optional
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query
@@ -24,6 +25,7 @@ from .models import (
 )
 from ..services.babies_data import BabyDataManager
 from ..services.sleep_patterns import analyze_sleep_patterns
+from ..services.correlation_analyzer import CorrelationAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -244,4 +246,85 @@ async def get_daily_sleep(
         end_date=end_date,
         data=data_points
     )
+
+
+@router.get("/insights")
+async def get_sleep_insights(
+    baby_id: int = Query(..., description="Baby ID"),
+    event_id: Optional[int] = Query(None, description="Specific awakening event ID (optional, defaults to latest)")
+):
+    """
+    Get AI-powered insights about a baby's sleep/awakening.
+    
+    If event_id is provided, analyzes that specific awakening event.
+    Otherwise, analyzes the most recent awakening event.
+    
+    Returns Gemini-generated insights about:
+    - Likely causes of awakening
+    - Environmental factors that may have affected sleep
+    - Actionable tips for better sleep
+    """
+    await validate_baby_exists(baby_id)
+    
+    baby_manager = BabyDataManager()
+    
+    # Get the awakening event
+    if event_id:
+        event = await baby_manager.get_awakening_event_by_id(event_id, baby_id)
+        if not event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Awakening event {event_id} not found for baby {baby_id}"
+            )
+    else:
+        # Get most recent awakening
+        event = await baby_manager.get_latest_awakening_event(baby_id)
+        if not event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No awakening events found for baby {baby_id}"
+            )
+    
+    # Parse event data
+    awakened_at = event.get("awakened_at")
+    sleep_started_at = event.get("sleep_started_at")
+    
+    if not awakened_at:
+        raise HTTPException(
+            status_code=400,
+            detail="Awakening event missing awakened_at timestamp"
+        )
+    
+    # Calculate sleep duration
+    if sleep_started_at:
+        sleep_duration_minutes = (awakened_at - sleep_started_at).total_seconds() / 60.0
+    else:
+        sleep_duration_minutes = 0.0
+    
+    # Run correlation analysis with Gemini
+    analyzer = CorrelationAnalyzer()
+    result = await analyzer.analyze_awakening(
+        baby_id=baby_id,
+        awakened_at=awakened_at,
+        sleep_duration_minutes=sleep_duration_minutes
+    )
+    
+    if not result.success:
+        logger.warning(f"Insights generation failed for baby {baby_id}: {result.error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate insights: {result.error}"
+        )
+    
+    logger.info(f"Generated AI insights for baby {baby_id}, event {event.get('id')}")
+    
+    return {
+        "baby_id": baby_id,
+        "event_id": event.get("id"),
+        "awakened_at": awakened_at.isoformat() if awakened_at else None,
+        "sleep_duration_minutes": round(sleep_duration_minutes, 2),
+        "environmental_changes": result.parameters,
+        "insights": result.insights,
+        "correlation_id": result.correlation_id
+    }
 

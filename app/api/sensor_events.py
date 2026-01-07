@@ -17,7 +17,7 @@ from .models import (
 )
 from ..services.sleep_state import get_sleep_state_manager
 from ..services.babies_data import BabyDataManager
-from ..services.correlation_analyzer import analyze_awakening
+from ..services.correlation_analyzer import generate_quick_insight
 
 logger = logging.getLogger(__name__)
 
@@ -121,24 +121,21 @@ async def sleep_end(request: SleepEventRequest):
         f"slept for {sleep_duration:.1f} minutes"
     )
     
-    # Trigger correlation analysis (runs async, logs results)
-    correlation_result = await analyze_awakening(
-        baby_id=baby_id,
-        awakened_at=awakened_at,
-        sleep_duration_minutes=sleep_duration
-    )
-    
-    if correlation_result.success:
-        logger.info(
-            f"Correlation analysis complete for baby {baby_id}: "
-            f"correlation_id={correlation_result.correlation_id}, "
-            f"params={list(correlation_result.parameters.keys())}"
+    # Generate quick AI insight and update the event (non-blocking)
+    try:
+        quick_insight = await generate_quick_insight(
+            baby_id=baby_id,
+            awakened_at=awakened_at,
+            sleep_duration_minutes=sleep_duration,
+            last_sensor_readings=last_readings
         )
-    else:
-        logger.warning(
-            f"Correlation analysis failed for baby {baby_id}: "
-            f"{correlation_result.error}"
-        )
+        
+        if quick_insight:
+            await baby_manager.update_awakening_event_insight(event_id, quick_insight)
+            logger.info(f"Added AI insight to awakening event {event_id}")
+    except Exception as e:
+        # Don't fail the endpoint if insight generation fails
+        logger.warning(f"Failed to generate quick insight for baby {baby_id}: {e}")
     
     return AwakeningEventResponse(
         baby_id=baby_id,

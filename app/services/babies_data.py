@@ -649,3 +649,125 @@ class BabyDataManager:
         except Exception as e:
             logger.error(f"Failed to check if baby {baby_id} exists: {e}")
             return False
+
+    async def get_awakening_event_by_id(
+        self,
+        event_id: int,
+        baby_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific awakening event by ID.
+        
+        Args:
+            event_id: The ID of the awakening event
+            baby_id: The ID of the baby (for validation)
+            
+        Returns:
+            Dictionary with event data or None if not found
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            baby_id,
+                            (event_metadata->>'sleep_started_at')::timestamp as sleep_started_at,
+                            (event_metadata->>'awakened_at')::timestamp as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
+                            event_metadata
+                        FROM "Nappi"."awakening_events"
+                        WHERE id = :event_id AND baby_id = :baby_id
+                    '''),
+                    {"event_id": event_id, "baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get awakening event {event_id}: {e}")
+            return None
+
+    async def get_latest_awakening_event(
+        self,
+        baby_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent awakening event for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Dictionary with event data or None if no events found
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            baby_id,
+                            (event_metadata->>'sleep_started_at')::timestamp as sleep_started_at,
+                            (event_metadata->>'awakened_at')::timestamp as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
+                            event_metadata
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                        ORDER BY (event_metadata->>'awakened_at')::timestamp DESC
+                        LIMIT 1
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get latest awakening event for baby {baby_id}: {e}")
+            return None
+
+    async def update_awakening_event_insight(
+        self,
+        event_id: int,
+        insight: str
+    ) -> bool:
+        """
+        Update an awakening event's event_metadata with AI-generated insight.
+        
+        Args:
+            event_id: The ID of the awakening event
+            insight: The AI-generated insight text
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import json
+            async with self.database.session() as session:
+                # Get current event_metadata, add insight, and update
+                result = await session.execute(
+                    text('''
+                        SELECT event_metadata FROM "Nappi"."awakening_events"
+                        WHERE id = :event_id
+                    '''),
+                    {"event_id": event_id}
+                )
+                row = result.first()
+                
+                if row:
+                    current_metadata = row[0] or {}
+                    current_metadata["ai_insight"] = insight
+                    
+                    await session.execute(
+                        text('''
+                            UPDATE "Nappi"."awakening_events"
+                            SET event_metadata = :metadata
+                            WHERE id = :event_id
+                        '''),
+                        {"event_id": event_id, "metadata": json.dumps(current_metadata)}
+                    )
+                    await session.commit()
+                    logger.info(f"Updated awakening event {event_id} with AI insight")
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Failed to update awakening event {event_id} with insight: {e}")
+            return False
