@@ -193,3 +193,32 @@ class AuthManager:
             
             logger.info(f"✅ User signed in: {username}")
             return user, baby
+
+    async def change_password(
+            self,
+            user_id: int,
+            old_password: str,
+            new_password: str,
+    ) -> bool:
+        """
+        Change user password.
+        Returns: boolean
+        Raises: ValueError if old password incorrect
+        """
+        async with self.database.session() as session:
+            result = await session.execute(
+                text('''
+                    UPDATE "Nappi"."users"
+                    SET password = :new_password 
+                    WHERE id = :user_id AND password = :old_password
+                    RETURNING id
+                '''),
+                {"user_id": user_id, "old_password": old_password, "new_password": new_password}
+            )
+            await session.commit()
+            updated_user = result.fetchone()
+            if updated_user:
+                logger.info(f"✅ Password updated for user")
+                return True
+            logger.warning(f"Failed password update attempt for user_id: {user_id}")
+            return False

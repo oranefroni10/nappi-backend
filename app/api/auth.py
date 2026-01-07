@@ -39,6 +39,10 @@ class SignInRequest(BaseModel):
     username: str
     password: str
 
+class ChangePasswordRequest(BaseModel):
+    user_id: int
+    old_password: str
+    new_password: str
 
 # ========== Response Models ==========
 
@@ -48,6 +52,8 @@ class SignUpResponse(BaseModel):
     baby_registered: bool
     baby: BabyResponse | None
     message: str
+    first_name: str
+    last_name: str
 
 
 class AuthResponse(BaseModel):
@@ -56,7 +62,11 @@ class AuthResponse(BaseModel):
     baby_id: int | None
     baby: BabyResponse | None
     message: str
+    first_name: str
+    last_name: str
 
+class ChangePasswordResponse(BaseModel):
+    password_changed: bool
 
 # ========== Endpoints ==========
 
@@ -88,7 +98,9 @@ async def signup(request: SignUpRequest):
             username=user.username,
             baby_registered=found,
             baby=baby_response,
-            message="Welcome!" if found else "Please register your baby"
+            message="Welcome!" if found else "Please register your baby",
+            first_name=user.first_name,
+            last_name=user.last_name,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -116,7 +128,9 @@ async def register_baby(request: RegisterBabyRequest):
                 last_name=baby.last_name,
                 birthdate=baby.birthdate
             ),
-            message=f"Baby {baby.first_name} {baby.last_name} registered!"
+            message=f"Baby {baby.first_name} {baby.last_name} registered!",
+            first_name=baby.first_name,
+            last_name=baby.last_name,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -143,7 +157,22 @@ async def signin(request: SignInRequest):
             username=user.username,
             baby_id=user.baby_id,
             baby=baby_response,
-            message="Sign in successful"
+            message="Sign in successful",
+            first_name=user.first_name,
+            last_name=user.last_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+async def change_password(request: ChangePasswordRequest):
+    """change password"""
+    try:
+        auth = AuthManager()
+        result = await auth.change_password(request.user_id, request.old_password, request.new_password)
+
+        return ChangePasswordResponse(
+            password_changed=result
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
