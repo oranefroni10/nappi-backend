@@ -492,5 +492,160 @@ class BabyDataManager:
             logger.error(f"Failed to upsert optimal stats for baby {baby_id}: {e}")
             return None
 
+    # ============================================
+    # Statistics Methods
+    # ============================================
 
+    async def get_daily_summaries_range(
+        self,
+        baby_id: int,
+        start_date: date_type,
+        end_date: date_type
+    ) -> List[Dict[str, Any]]:
+        """
+        Get daily summaries for a baby within a date range.
+        
+        Args:
+            baby_id: The ID of the baby
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            
+        Returns:
+            List of daily summary dictionaries with sensor averages
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT summary_date, avg_humidity, avg_temp, avg_noise
+                        FROM "Nappi"."daily_summary"
+                        WHERE baby_id = :baby_id
+                          AND summary_date >= :start_date
+                          AND summary_date <= :end_date
+                        ORDER BY summary_date ASC
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "start_date": start_date,
+                        "end_date": end_date
+                    }
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get daily summaries range for baby {baby_id}: {e}"
+            )
+            return []
 
+    async def get_sleep_sessions_for_month(
+        self,
+        baby_id: int,
+        year: int,
+        month: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sleep sessions for a baby in a specific month.
+        Extracts sleep_started_at and awakened_at from event_metadata.
+        
+        Args:
+            baby_id: The ID of the baby
+            year: Year (e.g., 2026)
+            month: Month (1-12)
+            
+        Returns:
+            List of dictionaries with sleep_started_at, awakened_at, duration_minutes
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            event_metadata->>'sleep_started_at' as sleep_started_at,
+                            event_metadata->>'awakened_at' as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as duration_minutes
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                          AND EXTRACT(YEAR FROM (event_metadata->>'awakened_at')::timestamp) = :year
+                          AND EXTRACT(MONTH FROM (event_metadata->>'awakened_at')::timestamp) = :month
+                        ORDER BY (event_metadata->>'sleep_started_at')::timestamp ASC
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "year": year,
+                        "month": month
+                    }
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get sleep sessions for baby {baby_id} ({year}-{month}): {e}"
+            )
+            return []
+
+    async def get_sleep_sessions_for_range(
+        self,
+        baby_id: int,
+        start_date: date_type,
+        end_date: date_type
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sleep sessions for a baby within a date range.
+        Used for calculating daily sleep totals.
+        
+        Args:
+            baby_id: The ID of the baby
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            
+        Returns:
+            List of dictionaries with awakened_at date and duration_minutes
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            DATE((event_metadata->>'awakened_at')::timestamp) as session_date,
+                            (event_metadata->>'sleep_duration_minutes')::float as duration_minutes
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                          AND DATE((event_metadata->>'awakened_at')::timestamp) >= :start_date
+                          AND DATE((event_metadata->>'awakened_at')::timestamp) <= :end_date
+                        ORDER BY (event_metadata->>'awakened_at')::timestamp ASC
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "start_date": start_date,
+                        "end_date": end_date
+                    }
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get sleep sessions for baby {baby_id} ({start_date} to {end_date}): {e}"
+            )
+            return []
+
+    async def baby_exists(self, baby_id: int) -> bool:
+        """
+        Check if a baby exists in the database.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            True if baby exists, False otherwise
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('SELECT 1 FROM "Nappi"."babies" WHERE id = :baby_id'),
+                    {"baby_id": baby_id}
+                )
+                return result.first() is not None
+        except Exception as e:
+            logger.error(f"Failed to check if baby {baby_id} exists: {e}")
+            return False

@@ -5,6 +5,7 @@ import logging
 from .api.endpoints import router
 from .api.auth import router as auth_router
 from .api.sensor_events import router as sensor_router
+from .api.stats import router as stats_router
 from .services.scheduler import start_scheduler, stop_scheduler
 from .core.database import get_database
 from .core.settings import settings
@@ -47,4 +48,5 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(router, tags=["monitoring"])
 app.include_router(sensor_router)
+app.include_router(stats_router)
 
