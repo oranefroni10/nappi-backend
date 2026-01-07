@@ -60,6 +60,7 @@ backend/
 │   ├── api/                     # API Layer
 │   │   ├── endpoints.py         # REST API routes (monitoring)
 │   │   ├── sensor_events.py     # Sensor event endpoints (sleep start/end)
+│   │   ├── stats.py             # Statistics & AI insights endpoints
 │   │   ├── auth.py              # Authentication routes
 │   │   └── models.py            # Pydantic request/response models
 │   │
@@ -101,11 +102,11 @@ backend/
 | `services/tasks.py` | Sensor data collection task |
 | `services/babies_data.py` | Database operations for babies and sleep data |
 | `services/sleep_state.py` | In-memory tracking of which babies are sleeping |
-| `services/correlation_analyzer.py` | Analyzes sensor changes before awakenings |
+| `services/correlation_analyzer.py` | Analyzes sensor changes + generates AI insights |
 | `services/daily_summary.py` | Daily aggregation and cleanup |
 | `services/optimal_stats.py` | Calculates optimal sleep conditions |
 | `services/sleep_patterns.py` | Clusters sleep sessions to find typical patterns |
-| `api/stats.py` | Statistics page API endpoints |
+| `api/stats.py` | Statistics page + AI insights endpoints |
 
 ---
 
@@ -260,7 +261,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/sensor/sleep-start` | Baby fell asleep → start collecting sensor data |
-| `POST` | `/sensor/sleep-end` | Baby woke up → stop collecting, save event, run AI analysis |
+| `POST` | `/sensor/sleep-end` | Baby woke up → stop collecting, save event, **generate quick AI insight** |
 | `POST` | `/sensor/baby-away` | Baby left crib → stop collecting (no awakening event) |
 | `GET` | `/sensor/sleep-status/{id}` | Check if specific baby is sleeping |
 | `GET` | `/sensor/sleeping-babies` | List all currently sleeping babies |
@@ -315,6 +316,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 | `GET` | `/stats/sensors` | Sensor averages over time (for graphs) |
 | `GET` | `/stats/sleep-patterns` | Sleep time patterns with clustering |
 | `GET` | `/stats/daily-sleep` | Daily sleep totals over time |
+| `GET` | `/stats/insights` | **AI-powered detailed insights** for an awakening event |
 
 See [Statistics Page Guide](#-statistics-page-guide) below for detailed examples.
 
@@ -323,7 +325,7 @@ See [Statistics Page Guide](#-statistics-page-guide) below for detailed examples
 ## 🧠 Smart Features
 
 ### 1. Correlation Analysis
-**When:** Triggered every time a baby wakes up
+**When:** Triggered every time a baby wakes up (via `/sensor/sleep-end`)
 
 - Looks at the last 60 minutes of sensor data before awakening
 - Compares first 25% of readings vs last 25% of readings
@@ -331,13 +333,53 @@ See [Statistics Page Guide](#-statistics-page-guide) below for detailed examples
 - Only keeps changes ≥10% (significant changes)
 - **Stored in:** `correlations.parameters`
 
-### 2. Gemini AI Insights
-**When:** Right after correlation analysis
+### 2. Gemini AI Insights (Two Types)
 
-- Sends significant sensor changes to Google Gemini AI
-- AI analyzes what likely caused the awakening
-- Returns 2-3 sentence explanation with actionable advice for parents
+#### A) Quick Insights (Automatic)
+**When:** Automatically on every `/sensor/sleep-end` event
+
+- Generates a **1-2 sentence** quick explanation of the awakening
+- Uses room conditions at time of awakening
+- Fast, concise insight for immediate display
+- **Stored in:** `awakening_events.event_metadata.ai_insight`
+
+**Example Quick Insight:**
+> "The room got a bit warm at 23.5°C which may have disturbed sleep. Try lowering the temperature to 20-22°C for more comfortable sleep."
+
+#### B) Detailed Insights (On-Demand Endpoint)
+**When:** Frontend calls `GET /stats/insights?baby_id=X`
+
+- Full analysis with environmental changes and baby context
+- Includes baby's age, optimal conditions, recent awakening history
+- Returns **3-4 sentence** detailed analysis with actionable advice
+- Requires sensor data for complete analysis
 - **Stored in:** `correlations.extra_data`
+
+**Request:**
+```
+GET /stats/insights?baby_id=1
+GET /stats/insights?baby_id=1&event_id=15  # Specific event
+```
+
+**Response:**
+```json
+{
+  "baby_id": 1,
+  "event_id": 15,
+  "awakened_at": "2026-01-07T20:54:29",
+  "sleep_duration_minutes": 45.5,
+  "environmental_changes": {
+    "temp_celcius": {
+      "start_value": 21.0,
+      "end_value": 23.5,
+      "change_percent": 12.0,
+      "direction": "increase"
+    }
+  },
+  "insights": "The temperature increased significantly from 21°C to 23.5°C in the hour before Noam woke up. Babies sleep best in slightly cool rooms (18-22°C). Consider checking the heating or opening a window to maintain a comfortable temperature.",
+  "correlation_id": 5
+}
+```
 
 ### 3. Optimal Conditions Calculator
 **When:** Daily at 10:05 AM
@@ -542,6 +584,53 @@ Total = 90 + 60 + 540 = 690 minutes = 11.5 hours
 
 ---
 
+### 4. AI Insights (`/stats/insights`)
+
+Get detailed AI-powered analysis of an awakening event. The frontend can call this when a user wants more information about why their baby woke up.
+
+**Request:**
+```
+GET /stats/insights?baby_id=1              # Analyzes latest awakening
+GET /stats/insights?baby_id=1&event_id=15  # Analyzes specific event
+```
+
+**What it does:**
+- Fetches the awakening event (latest or specified)
+- Gets sensor data from the hour before awakening
+- Analyzes environmental changes
+- Generates detailed AI insights using Google Gemini
+- Returns environmental changes + AI analysis
+
+**Response:**
+```json
+{
+  "baby_id": 1,
+  "event_id": 15,
+  "awakened_at": "2026-01-07T20:54:29.654614",
+  "sleep_duration_minutes": 45.5,
+  "environmental_changes": {
+    "temp_celcius": {
+      "start_value": 21.0,
+      "end_value": 23.5,
+      "change_percent": 12.0,
+      "direction": "increase"
+    },
+    "noise_decibel": {
+      "start_value": 35.0,
+      "end_value": 55.0,
+      "change_percent": 57.0,
+      "direction": "increase"
+    }
+  },
+  "insights": "The room temperature rose from 21°C to 23.5°C and noise increased significantly, which likely disturbed Noam's sleep. Try keeping the room between 18-22°C and using white noise to mask sudden sounds.",
+  "correlation_id": 8
+}
+```
+
+**Note:** Requires sensor data to be collected during sleep. If no sensor data is available, returns an error.
+
+---
+
 ### Validation Rules
 
 | Rule | Value |
@@ -559,10 +648,28 @@ Total = 90 + 60 + 540 = 690 minutes = 11.5 hours
 | `users` | User accounts |
 | `babies` | Baby profiles |
 | `sleep_realtime_data` | Raw sensor readings (deleted daily after summary) |
-| `awakening_events` | When baby woke up + metadata |
-| `correlations` | What changed before awakening + AI insights |
+| `awakening_events` | When baby woke up + metadata + **quick AI insight** |
+| `correlations` | What changed before awakening + detailed AI insights |
 | `daily_summary` | Daily averages + morning/noon/night awakening counts |
 | `optimal_stats` | Best conditions per baby (one row each, updated daily) |
+
+### Awakening Events Structure
+
+The `awakening_events.event_metadata` JSON contains:
+```json
+{
+  "sleep_started_at": "2026-01-07T20:00:00",
+  "awakened_at": "2026-01-07T20:45:00",
+  "sleep_duration_minutes": 45.0,
+  "last_sensor_readings": {
+    "temp_celcius": 23.5,
+    "humidity": 45.0,
+    "noise_decibel": 55.0,
+    "heart_rate": 120.0
+  },
+  "ai_insight": "The room was a bit warm at 23.5°C. Try keeping it around 20-22°C for better sleep."
+}
+```
 
 ### Awakening Time Periods
 
@@ -675,10 +782,12 @@ pytest --cov=app tests/
 - [x] **Awakening events** recording with metadata
 - [x] **Correlation analysis** (sensor change detection)
 - [x] **Gemini AI integration** for insights
+  - [x] Quick insights (automatic on sleep-end, 1-2 lines)
+  - [x] Detailed insights endpoint (`/stats/insights`)
 - [x] **Daily summary generation** with awakening counts
 - [x] **Optimal stats calculation** with weighted averages
 - [x] **Database operations** for all features
-- [x] **Statistics page endpoints** (sensors, sleep patterns, daily sleep)
+- [x] **Statistics page endpoints** (sensors, sleep patterns, daily sleep, insights)
 - [x] **Sleep pattern clustering** with averaged time windows
 
 ### 🚧 In Progress / TODO
