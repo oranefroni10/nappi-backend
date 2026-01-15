@@ -134,3 +134,157 @@ class OptimalStatsResponse(BaseModel):
     humidity: Optional[float] = None
     noise: Optional[float] = None
     has_data: bool  # False if not enough data yet
+
+
+# ============================================
+# AI-Powered Insights Models
+# ============================================
+
+# --- Structured Insights ---
+
+class StructuredInsightResponse(BaseModel):
+    """Structured multi-section AI insight."""
+    likely_cause: str
+    actionable_tips: List[str]
+    environment_assessment: str
+    age_context: str
+    sleep_quality_note: str
+
+
+class EnhancedInsightsResponse(BaseModel):
+    """Enhanced insights response with structured and simple versions."""
+    baby_id: int
+    event_id: Optional[int] = None
+    awakened_at: Optional[datetime] = None
+    sleep_duration_minutes: Optional[float] = None
+    environmental_changes: dict
+    insights: Optional[StructuredInsightResponse] = None
+    simple_insight: Optional[str] = None
+    correlation_id: Optional[int] = None
+
+
+# --- Trend Analysis ---
+
+class AgeRecommendation(BaseModel):
+    """Sleep recommendations based on baby's age."""
+    min_hours: int
+    max_hours: int
+    typical_naps: str
+    night_hours: str
+
+
+class WeeklyTrend(BaseModel):
+    """7-day trend analysis."""
+    avg_sleep_hours: float
+    trend: str  # "improving", "declining", "stable"
+    trend_percentage: float
+    consistency_score: float
+    total_sessions: int
+    avg_sessions_per_day: float
+    best_day: Optional[str] = None
+    worst_day: Optional[str] = None
+
+
+class MonthlyTrend(BaseModel):
+    """30-day trend analysis."""
+    avg_sleep_hours: float
+    trend: str
+    trend_percentage: float
+    consistency_score: float
+    total_sessions: int
+
+
+class AITrendInsights(BaseModel):
+    """AI-generated insights about trends."""
+    summary: str
+    highlights: List[str]
+    concerns: List[str]
+    recommendations: List[str]
+    age_comparison: str
+
+
+class TrendsResponse(BaseModel):
+    """Complete trend analysis response."""
+    baby_id: int
+    baby_name: str
+    age_months: int
+    age_recommendation: AgeRecommendation
+    weekly: Optional[WeeklyTrend] = None
+    monthly: Optional[MonthlyTrend] = None
+    ai_insights: Optional[AITrendInsights] = None
+
+
+# --- Schedule Prediction ---
+
+class WakeWindowRange(BaseModel):
+    """Wake window range in hours."""
+    min: float
+    max: float
+
+
+class NextSleepPrediction(BaseModel):
+    """Prediction for next sleep window."""
+    predicted_time: datetime
+    predicted_time_formatted: str
+    confidence: str  # "high", "medium", "low"
+    type: str  # "nap" or "bedtime"
+    based_on: str
+    minutes_until: int
+    wake_window_status: str
+
+
+class SchedulePredictionResponse(BaseModel):
+    """Response for schedule prediction."""
+    baby_id: int
+    generated_at: datetime
+    wake_window_range_hours: WakeWindowRange
+    optimal_bedtime: str  # "HH:MM" format
+    current_wake_duration_minutes: Optional[int] = None
+    next_sleep: Optional[NextSleepPrediction] = None
+    suggestions: List[str]
+
+
+# --- AI Summary (Combined for Home Dashboard) ---
+
+class EnvironmentStatus(BaseModel):
+    """Current environment status assessment."""
+    status: str  # "optimal", "needs_attention", "unknown"
+    temperature_status: Optional[str] = None
+    humidity_status: Optional[str] = None
+    noise_status: Optional[str] = None
+    message: str
+
+
+class SleepQualitySummary(BaseModel):
+    """Summary of recent sleep quality."""
+    last_sleep_hours: Optional[float] = None
+    last_sleep_quality: Optional[str] = None  # "good", "fair", "poor"
+    trend_direction: Optional[str] = None  # "improving", "stable", "declining"
+    message: str
+
+
+class AISummaryResponse(BaseModel):
+    """Comprehensive AI summary for home dashboard."""
+    baby_id: int
+    baby_name: str
+    generated_at: datetime
+    
+    # Sleep quality summary
+    sleep_summary: SleepQualitySummary
+    
+    # Environment check
+    environment: EnvironmentStatus
+    
+    # Next sleep prediction
+    next_sleep_prediction: Optional[str] = None
+    next_sleep_time: Optional[str] = None
+    
+    # Today's tip
+    todays_tip: str
+    
+    # Trend indicator
+    weekly_trend: Optional[str] = None
+    trend_message: Optional[str] = None
+    
+    # Quick insights list
+    quick_insights: List[str]

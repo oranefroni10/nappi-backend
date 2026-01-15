@@ -71,7 +71,8 @@ backend/
 │   │
 │   ├── db/                      # Database Layer
 │   │   ├── models.py            # Pydantic models for DB tables
-│   │   └── generate_models.py   # Script to generate models from DB
+│   │   ├── generate_models.py   # Script to generate models from DB
+│   │   └── seed_demo_data.py    # Demo data seeder for testing/demos
 │   │
 │   └── services/                # Background Services
 │       ├── scheduler.py         # Task scheduler (APScheduler)
@@ -157,7 +158,31 @@ CREATE DATABASE nappi;
 \q
 ```
 
-### 5. Configure Environment
+### 5. Seed Demo Data (Optional)
+
+Populate the database with realistic demo data for testing or demonstrations:
+
+```bash
+cd backend
+python -m app.db.seed_demo_data
+```
+
+**WARNING**: This will DELETE all existing data!
+
+After seeding, you can log in with:
+- **Username**: `demo@nappi.app`
+- **Password**: `demo123`
+
+The seeder creates:
+- 3 babies with varied ages (3 months, 7 months, 14 months)
+- 3 user accounts linked to babies
+- 90 days of sensor readings per baby
+- Awakening events with AI insights
+- Daily summaries and optimal stats
+- Environment alerts (temperature, humidity, noise)
+- Multiple notes per baby for the Profile page
+
+### 6. Configure Environment
 
 Create a `.env` file in the `backend/` directory:
 
@@ -876,6 +901,15 @@ CORS_ORIGINS: list = [
     "http://your-frontend-url",  # Add your URL here
 ]
 ```
+
+### Issue: Demo data seeding fails
+
+**Error**: `database "nappi" does not exist` or connection errors
+
+**Solution**:
+1. Ensure PostgreSQL is running
+2. Check your `DB_CONNECTION_STRING` in `.env`
+3. Create the database if it doesn't exist: `createdb nappi`
 
 ---
 

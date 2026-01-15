@@ -89,6 +89,29 @@ class CorrelationResult:
 
 
 @dataclass
+class StructuredInsight:
+    """Rich, multi-section AI insight for enhanced analysis."""
+    likely_cause: str
+    actionable_tips: List[str]
+    environment_assessment: str
+    age_context: str
+    sleep_quality_note: str
+    raw_text: str  # Original full response for backwards compatibility
+
+
+@dataclass
+class EnhancedCorrelationResult:
+    """Enhanced result with structured multi-section insights."""
+    baby_id: int
+    correlation_id: Optional[int]
+    parameters: Dict[str, Any]
+    insights: Optional[StructuredInsight]
+    simple_insight: Optional[str]  # Simple 1-2 sentence version
+    success: bool
+    error: Optional[str] = None
+
+
+@dataclass
 class BabyContext:
     """Additional context about the baby for AI insights."""
     name: str
@@ -98,6 +121,7 @@ class BabyContext:
     optimal_noise: Optional[float]
     recent_awakenings_24h: int
     last_sensor_values: Dict[str, float]
+    notes: Optional[str] = None  # Parent notes: allergies, conditions, health info
 
 
 class CorrelationAnalyzer:
@@ -145,6 +169,11 @@ class CorrelationAnalyzer:
                     if last_reading.get(param) is not None:
                         last_values[param] = last_reading[param]
             
+            # Get parent notes (allergies, conditions, health info)
+            notes = await self.baby_manager.get_baby_notes(baby_id)
+            # Truncate notes for prompt size (max 1000 chars)
+            truncated_notes = notes[:1000] if notes else None
+            
             return BabyContext(
                 name=baby.first_name,
                 age_months=age_months,
@@ -152,7 +181,8 @@ class CorrelationAnalyzer:
                 optimal_humidity=optimal_stats.get("humidity"),
                 optimal_noise=optimal_stats.get("noise"),
                 recent_awakenings_24h=recent_awakenings,
-                last_sensor_values=last_values
+                last_sensor_values=last_values,
+                notes=truncated_notes
             )
         except Exception as e:
             logger.warning(f"Failed to get baby context: {e}")
@@ -406,14 +436,14 @@ class CorrelationAnalyzer:
             baby_context=baby_context
         )
 
-        # Use gemini-2.5-flash - fastest and most reliable
-        model_name = "models/gemini-2.5-flash"
+        # Use configurable model (default: gemini-2.0-flash for better quality)
+        model_name = settings.GEMINI_MODEL_INSIGHTS
         
         # Generation config for consistent, concise responses
         from google.genai import types
         generation_config = types.GenerateContentConfig(
             temperature=0.0,
-            max_output_tokens=400,
+            max_output_tokens=2048,  # Increased significantly to prevent truncation
             top_p=0.9,
         )
         
@@ -432,8 +462,12 @@ class CorrelationAnalyzer:
             )
             
             if response and response.text:
+                text = response.text.strip()
+                # Check for potentially incomplete response
+                if text and text[-1] not in '.!?:)"\'':
+                    logger.warning(f"Potentially incomplete insight response for baby {baby_id} - may have been truncated")
                 logger.info(f"Generated Gemini insights for baby {baby_id}")
-                return response.text.strip()
+                return text
             else:
                 logger.warning(f"Empty response from Gemini for baby {baby_id}")
                 return None
@@ -467,11 +501,12 @@ class CorrelationAnalyzer:
         baby_info = ""
         if baby_context:
             age_str = self._format_age(baby_context.age_months)
+            notes_text = f"\n- Parent Notes: {baby_context.notes}" if baby_context.notes else ""
             baby_info = f"""
 Baby Information:
 - Name: {baby_context.name}
 - Age: {age_str}
-- Awakenings in last 24 hours: {baby_context.recent_awakenings_24h} (including this one)
+- Awakenings in last 24 hours: {baby_context.recent_awakenings_24h} (including this one){notes_text}
 """
 
         # Build current sensor values section
@@ -595,6 +630,319 @@ Respond in a conversational tone as if speaking directly to the parents."""
 
         return prompt
 
+    def _build_enhanced_prompt(
+        self,
+        awakened_at: datetime,
+        sleep_duration_minutes: float,
+        significant_changes: List[ParameterChange],
+        all_changes: List[ParameterChange],
+        baby_context: Optional[BabyContext]
+    ) -> str:
+        """Build an enhanced prompt that generates structured multi-section responses."""
+        
+        # Format time of day
+        hour = awakened_at.hour
+        if 5 <= hour < 12:
+            time_of_day = "morning"
+        elif 12 <= hour < 17:
+            time_of_day = "afternoon"
+        elif 17 <= hour < 21:
+            time_of_day = "evening"
+        else:
+            time_of_day = "night"
+
+        # Build baby info section
+        baby_info = ""
+        baby_name = "Baby"
+        if baby_context:
+            baby_name = baby_context.name
+            age_str = self._format_age(baby_context.age_months)
+            notes_text = f"\n- Parent Notes: {baby_context.notes}" if baby_context.notes else ""
+            baby_info = f"""
+Baby Information:
+- Name: {baby_context.name}
+- Age: {age_str}
+- Awakenings in last 24 hours: {baby_context.recent_awakenings_24h} (including this one){notes_text}
+"""
+
+        # Build current sensor values section
+        current_values_text = ""
+        if baby_context and baby_context.last_sensor_values:
+            values_lines = []
+            for param, value in baby_context.last_sensor_values.items():
+                info = HEALTHY_RANGES.get(param, {})
+                name = info.get("name", param)
+                unit = info.get("unit", "")
+                min_val = info.get("min", 0)
+                max_val = info.get("max", 100)
+                
+                status = "normal"
+                if value < min_val:
+                    status = "below recommended"
+                elif value > max_val:
+                    status = "above recommended"
+                
+                values_lines.append(f"- {name}: {value}{unit} ({status}, healthy range: {min_val}-{max_val}{unit})")
+            
+            current_values_text = "\nCurrent Room Conditions:\n" + "\n".join(values_lines)
+
+        # Format significant changes
+        changes_text = ""
+        if significant_changes:
+            changes_lines = []
+            for change in significant_changes:
+                info = HEALTHY_RANGES.get(change.param_name, {})
+                name = info.get("name", change.param_name)
+                unit = info.get("unit", "")
+                
+                changes_lines.append(
+                    f"- {name}: {change.direction}d by {change.change_percent:.0f}% "
+                    f"(from {change.start_value}{unit} to {change.end_value}{unit})"
+                )
+            changes_text = "\nSignificant Environmental Changes:\n" + "\n".join(changes_lines)
+        else:
+            changes_text = "\nSignificant Environmental Changes: None detected"
+
+        sleep_hours = sleep_duration_minutes / 60
+
+        prompt = f"""You are a pediatric sleep consultant analyzing {baby_name}'s sleep data.
+{baby_info}{current_values_text}{changes_text}
+
+Awakening Time: {awakened_at.strftime('%H:%M')} ({time_of_day})
+Sleep Duration: {sleep_hours:.1f} hours ({sleep_duration_minutes:.0f} minutes)
+
+Provide your analysis in this EXACT format with these sections:
+
+LIKELY_CAUSE: (1-2 sentences explaining the most probable reason for this awakening)
+
+TIPS:
+- (First actionable tip parents can try)
+- (Second actionable tip)
+- (Third actionable tip if relevant, otherwise omit)
+
+ENVIRONMENT: (1 sentence assessment of current room conditions - are they optimal or need adjustment?)
+
+AGE_CONTEXT: (1 sentence about how this sleep pattern relates to typical babies this age)
+
+SLEEP_QUALITY: (1 sentence about the quality/duration of this sleep session)
+
+Be warm, practical, and reassuring. Focus on what parents can actually do."""
+
+        return prompt
+
+    def _parse_structured_insight(self, response_text: str) -> StructuredInsight:
+        """Parse AI response into structured insight sections."""
+        
+        likely_cause = ""
+        actionable_tips = []
+        environment_assessment = ""
+        age_context = ""
+        sleep_quality_note = ""
+        
+        current_section = None
+        
+        for line in response_text.split('\n'):
+            line = line.strip()
+            
+            if line.startswith("LIKELY_CAUSE:"):
+                current_section = "cause"
+                likely_cause = line.replace("LIKELY_CAUSE:", "").strip()
+            elif line.startswith("TIPS:"):
+                current_section = "tips"
+            elif line.startswith("ENVIRONMENT:"):
+                current_section = "environment"
+                environment_assessment = line.replace("ENVIRONMENT:", "").strip()
+            elif line.startswith("AGE_CONTEXT:"):
+                current_section = "age"
+                age_context = line.replace("AGE_CONTEXT:", "").strip()
+            elif line.startswith("SLEEP_QUALITY:"):
+                current_section = "quality"
+                sleep_quality_note = line.replace("SLEEP_QUALITY:", "").strip()
+            elif line.startswith("- ") and current_section == "tips":
+                actionable_tips.append(line[2:].strip())
+            elif line and current_section == "cause" and not line.startswith("-"):
+                likely_cause += " " + line
+            elif line and current_section == "environment" and not line.startswith("-"):
+                environment_assessment += " " + line
+            elif line and current_section == "age" and not line.startswith("-"):
+                age_context += " " + line
+            elif line and current_section == "quality" and not line.startswith("-"):
+                sleep_quality_note += " " + line
+        
+        # Fallbacks if parsing didn't work well
+        if not likely_cause:
+            likely_cause = "Unable to determine specific cause from available data."
+        if not actionable_tips:
+            actionable_tips = ["Continue monitoring sleep patterns for more insights."]
+        if not environment_assessment:
+            environment_assessment = "Room conditions are being monitored."
+        if not age_context:
+            age_context = "Sleep patterns vary significantly at this age."
+        if not sleep_quality_note:
+            sleep_quality_note = "Sleep duration is being tracked."
+        
+        return StructuredInsight(
+            likely_cause=likely_cause.strip(),
+            actionable_tips=actionable_tips[:3],
+            environment_assessment=environment_assessment.strip(),
+            age_context=age_context.strip(),
+            sleep_quality_note=sleep_quality_note.strip(),
+            raw_text=response_text
+        )
+
+    async def analyze_awakening_enhanced(
+        self,
+        baby_id: int,
+        awakened_at: datetime,
+        sleep_duration_minutes: float
+    ) -> EnhancedCorrelationResult:
+        """
+        Enhanced analysis with structured multi-section AI insights.
+        
+        Args:
+            baby_id: The ID of the baby who woke up
+            awakened_at: Timestamp when the baby woke up
+            sleep_duration_minutes: How long the baby slept
+            
+        Returns:
+            EnhancedCorrelationResult with structured insights
+        """
+        logger.info(f"Starting enhanced correlation analysis for baby {baby_id}")
+
+        try:
+            # 1. Get sensor data from the time window before awakening
+            start_time = awakened_at - timedelta(minutes=self.time_window_minutes)
+            sensor_data = await self.baby_manager.get_sensor_data_range(
+                baby_id=baby_id,
+                start_time=start_time,
+                end_time=awakened_at
+            )
+
+            if not sensor_data or len(sensor_data) < 2:
+                logger.warning(f"Insufficient sensor data for baby {baby_id}")
+                return EnhancedCorrelationResult(
+                    baby_id=baby_id,
+                    correlation_id=None,
+                    parameters={},
+                    insights=None,
+                    simple_insight=None,
+                    success=False,
+                    error="Insufficient sensor data for analysis"
+                )
+
+            # 2. Calculate parameter changes
+            parameter_changes = self._calculate_parameter_changes(sensor_data)
+            significant_changes = self._filter_significant_changes(parameter_changes)
+            parameters_dict = self._build_parameters_dict(significant_changes)
+
+            # 3. Get baby context
+            baby_context = await self._get_baby_context(baby_id, awakened_at, sensor_data)
+
+            # 4. Generate structured AI insights
+            structured_insight = await self._generate_enhanced_insights(
+                baby_id=baby_id,
+                awakened_at=awakened_at,
+                sleep_duration_minutes=sleep_duration_minutes,
+                parameter_changes=significant_changes,
+                all_changes=parameter_changes,
+                baby_context=baby_context
+            )
+
+            # 5. Generate simple 1-2 sentence insight for quick display
+            simple_insight = await generate_quick_insight(
+                baby_id=baby_id,
+                awakened_at=awakened_at,
+                sleep_duration_minutes=sleep_duration_minutes,
+                last_sensor_readings=baby_context.last_sensor_values if baby_context else None
+            )
+
+            # 6. Store in correlations table (use raw_text for backwards compatibility)
+            insights_text = structured_insight.raw_text if structured_insight else None
+            correlation_id = await self.baby_manager.insert_correlation(
+                baby_id=baby_id,
+                correlation_time=awakened_at,
+                parameters=parameters_dict,
+                extra_data=insights_text
+            )
+
+            logger.info(f"Enhanced analysis complete for baby {baby_id}")
+
+            return EnhancedCorrelationResult(
+                baby_id=baby_id,
+                correlation_id=correlation_id,
+                parameters=parameters_dict,
+                insights=structured_insight,
+                simple_insight=simple_insight,
+                success=True
+            )
+
+        except Exception as e:
+            logger.error(f"Error in enhanced analysis for baby {baby_id}: {e}", exc_info=True)
+            return EnhancedCorrelationResult(
+                baby_id=baby_id,
+                correlation_id=None,
+                parameters={},
+                insights=None,
+                simple_insight=None,
+                success=False,
+                error=str(e)
+            )
+
+    async def _generate_enhanced_insights(
+        self,
+        baby_id: int,
+        awakened_at: datetime,
+        sleep_duration_minutes: float,
+        parameter_changes: List[ParameterChange],
+        all_changes: List[ParameterChange],
+        baby_context: Optional[BabyContext]
+    ) -> Optional[StructuredInsight]:
+        """Generate structured multi-section AI insights."""
+        client = _get_gemini_client()
+        
+        if not client:
+            logger.warning("Gemini client not available")
+            return None
+
+        prompt = self._build_enhanced_prompt(
+            awakened_at=awakened_at,
+            sleep_duration_minutes=sleep_duration_minutes,
+            significant_changes=parameter_changes,
+            all_changes=all_changes,
+            baby_context=baby_context
+        )
+
+        try:
+            from google.genai import types
+            
+            loop = asyncio.get_event_loop()
+            # Use configurable model for enhanced insights
+            model_name = settings.GEMINI_MODEL_INSIGHTS
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=2048,  # Increased significantly to prevent truncation
+                    ),
+                )
+            )
+            
+            if response and response.text:
+                text = response.text.strip()
+                # Check for potentially incomplete response
+                if text and text[-1] not in '.!?:)"\'':
+                    logger.warning(f"Potentially incomplete enhanced insight for baby {baby_id} - may have been truncated")
+                logger.info(f"Generated enhanced insights for baby {baby_id}")
+                return self._parse_structured_insight(text)
+            
+        except Exception as e:
+            logger.error(f"Enhanced insight generation failed for baby {baby_id}: {e}")
+        
+        return None
+
     def _format_age(self, age_months: int) -> str:
         """Format age in a readable way."""
         if age_months < 1:
@@ -693,21 +1041,27 @@ In exactly 1-2 short sentences, explain the most likely reason for waking and on
         from google.genai import types
         
         loop = asyncio.get_event_loop()
+        # Use configurable model for quick insights
+        model_name = settings.GEMINI_MODEL_INSIGHTS
         response = await loop.run_in_executor(
             None,
             lambda: client.models.generate_content(
-                model="models/gemini-2.5-flash",
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=100,  # Keep it short
+                    max_output_tokens=512,  # Increased to prevent truncation
                 ),
             )
         )
         
         if response and response.text:
+            text = response.text.strip()
+            # Check for potentially incomplete response
+            if text and text[-1] not in '.!?:)"\'':
+                logger.warning(f"Potentially incomplete quick insight for baby {baby_id} - may have been truncated")
             logger.info(f"Generated quick insight for baby {baby_id}")
-            return response.text.strip()
+            return text
         
     except Exception as e:
         logger.error(f"Quick insight generation failed for baby {baby_id}: {e}")

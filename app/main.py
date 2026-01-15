@@ -7,6 +7,8 @@ from .api.auth import router as auth_router
 from .api.sensor_events import router as sensor_router
 from .api.stats import router as stats_router
 from .api.alerts import router as alerts_router, push_router
+from .api.babies import router as babies_router
+from .api.chat import router as chat_router
 from .services.scheduler import start_scheduler, stop_scheduler
 from .core.database import get_database
 from .core.settings import settings
@@ -52,4 +54,6 @@ app.include_router(sensor_router)
 app.include_router(stats_router)
 app.include_router(alerts_router)
 app.include_router(push_router)
+app.include_router(babies_router)
+app.include_router(chat_router)
 

@@ -91,7 +91,8 @@ class AuthManager:
         user_id: int,
         first_name: str,
         birthdate: date,
-        gender: Optional[str] = None
+        gender: Optional[str] = None,
+        notes: Optional[str] = None
     ) -> Tuple[User, Babies]:
         """
         Create baby using user's last_name and link to user.
@@ -108,18 +109,19 @@ class AuthManager:
             if not user_row:
                 raise ValueError("User not found")
             
-            # Create baby using user's last_name
+            # Create baby using user's last_name (include notes)
             baby_result = await session.execute(
                 text('''
-                    INSERT INTO "Nappi"."babies" (first_name, last_name, birthdate, gender)
-                    VALUES (:first_name, :last_name, :birthdate, :gender)
-                    RETURNING id, first_name, last_name, birthdate, gender, created_at
+                    INSERT INTO "Nappi"."babies" (first_name, last_name, birthdate, gender, notes)
+                    VALUES (:first_name, :last_name, :birthdate, :gender, :notes)
+                    RETURNING id, first_name, last_name, birthdate, gender, notes, created_at
                 '''),
                 {
                     "first_name": first_name,
                     "last_name": user_row["last_name"],
                     "birthdate": birthdate,
-                    "gender": gender
+                    "gender": gender,
+                    "notes": notes
                 }
             )
             baby_row = baby_result.mappings().first()
@@ -159,7 +161,7 @@ class AuthManager:
                 text('''
                     SELECT u.id, u.username, u.password, u.first_name, u.last_name, u.baby_id,
                            b.id as b_id, b.first_name as b_first_name, b.last_name as b_last_name, 
-                           b.birthdate, b.gender, b.created_at
+                           b.birthdate, b.gender, b.notes, b.created_at
                     FROM "Nappi"."users" u
                     LEFT JOIN "Nappi"."babies" b ON u.baby_id = b.id
                     WHERE u.username = :username AND u.password = :password
@@ -188,6 +190,7 @@ class AuthManager:
                     last_name=row["b_last_name"],
                     birthdate=row["birthdate"],
                     gender=row["gender"],
+                    notes=row.get("notes"),
                     created_at=row["created_at"]
                 )
             
