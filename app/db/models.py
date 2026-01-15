@@ -7,25 +7,27 @@ from typing import Optional
 from decimal import Decimal
 
 
-class User(BaseModel):
-    """Represents the Nappi.users table"""
+class Alerts(BaseModel):
+    """
+    Represents the Nappi.alerts table
+    """
     id: Optional[int] = None
-    username: str
-    password: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    baby_id: Optional[int] = None
+    baby_id: int
+    user_id: int
+    type: str
+    title: str
+    message: str
+    severity: Optional[str] = None
+    metadata: Optional[dict] = None
+    read: Optional[bool] = None
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
-
-
-class BabyResponse(BaseModel):
-    """Baby data for API responses"""
-    id: int
-    first_name: str
-    last_name: str
-    birthdate: date
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+            date: lambda v: v.isoformat() if v else None,
+        }
 
 
 class AwakeningEvents(BaseModel):
@@ -53,6 +55,7 @@ class Babies(BaseModel):
     last_name: str
     birthdate: date
     gender: Optional[str] = None
+    notes: Optional[str] = None  # Parent notes: allergies, conditions, health info
     created_at: Optional[datetime] = None
 
     class Config:
@@ -107,14 +110,33 @@ class DailySummary(BaseModel):
 class OptimalStats(BaseModel):
     """
     Represents the Nappi.optimal_stats table
-    Stores the optimal environmental conditions for each baby's sleep.
     """
     id: int
     baby_id: Optional[int] = None
     temperature: Optional[float] = None
-    humidity: Optional[float] = None
+    humidity : Optional[float] = None
     noise: Optional[float] = None
     heart_rate: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+            date: lambda v: v.isoformat() if v else None,
+        }
+
+
+class PushSubscriptions(BaseModel):
+    """
+    Represents the Nappi.push_subscriptions table
+    """
+    id: Optional[int] = None
+    user_id: int
+    endpoint: str
+    p256dh_key: str
+    auth_key: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -144,3 +166,47 @@ class SleepRealtimeData(BaseModel):
             date: lambda v: v.isoformat() if v else None,
         }
 
+
+class Users(BaseModel):
+    """
+    Represents the Nappi.users table
+    """
+    id: int
+    username: str
+    password: str
+    baby_id: Optional[int] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+            date: lambda v: v.isoformat() if v else None,
+        }
+
+
+# =============================================================================
+# MANUAL ADDITIONS - Keep these after regenerating models
+# =============================================================================
+
+# Alias for backward compatibility (auth_manager.py uses singular name)
+User = Users
+
+
+class BabyResponse(BaseModel):
+    """
+    Baby info returned in API responses.
+    Includes notes field for parent-provided health information.
+    """
+    id: int
+    first_name: str
+    last_name: str
+    birthdate: date
+    notes: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            date: lambda v: v.isoformat() if v else None,
+        }

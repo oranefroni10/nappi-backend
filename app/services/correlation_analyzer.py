@@ -98,6 +98,7 @@ class BabyContext:
     optimal_noise: Optional[float]
     recent_awakenings_24h: int
     last_sensor_values: Dict[str, float]
+    notes: Optional[str] = None  # Parent notes: allergies, conditions, health info
 
 
 class CorrelationAnalyzer:
@@ -145,6 +146,11 @@ class CorrelationAnalyzer:
                     if last_reading.get(param) is not None:
                         last_values[param] = last_reading[param]
             
+            # Get parent notes (allergies, conditions, health info)
+            notes = await self.baby_manager.get_baby_notes(baby_id)
+            # Truncate notes for prompt size (max 1000 chars)
+            truncated_notes = notes[:1000] if notes else None
+            
             return BabyContext(
                 name=baby.first_name,
                 age_months=age_months,
@@ -152,7 +158,8 @@ class CorrelationAnalyzer:
                 optimal_humidity=optimal_stats.get("humidity"),
                 optimal_noise=optimal_stats.get("noise"),
                 recent_awakenings_24h=recent_awakenings,
-                last_sensor_values=last_values
+                last_sensor_values=last_values,
+                notes=truncated_notes
             )
         except Exception as e:
             logger.warning(f"Failed to get baby context: {e}")
@@ -467,11 +474,12 @@ class CorrelationAnalyzer:
         baby_info = ""
         if baby_context:
             age_str = self._format_age(baby_context.age_months)
+            notes_text = f"\n- Parent Notes: {baby_context.notes}" if baby_context.notes else ""
             baby_info = f"""
 Baby Information:
 - Name: {baby_context.name}
 - Age: {age_str}
-- Awakenings in last 24 hours: {baby_context.recent_awakenings_24h} (including this one)
+- Awakenings in last 24 hours: {baby_context.recent_awakenings_24h} (including this one){notes_text}
 """
 
         # Build current sensor values section

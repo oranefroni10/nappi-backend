@@ -798,3 +798,188 @@ class BabyDataManager:
         except Exception as e:
             logger.error(f"Failed to get optimal stats for baby {baby_id}: {e}")
             return None
+
+    # ============================================
+    # Baby Notes Methods
+    # ============================================
+
+    async def get_baby_notes(self, baby_id: int) -> Optional[str]:
+        """
+        Get notes for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Notes string or None if no notes
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('SELECT notes FROM "Nappi"."babies" WHERE id = :baby_id'),
+                    {"baby_id": baby_id}
+                )
+                row = result.first()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get notes for baby {baby_id}: {e}")
+            return None
+
+    async def update_baby_notes(self, baby_id: int, notes: str) -> bool:
+        """
+        Update notes for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            notes: The notes text (will be truncated to 2000 chars)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Truncate notes to 2000 chars
+            truncated_notes = notes[:2000] if notes else ""
+            
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        UPDATE "Nappi"."babies" 
+                        SET notes = :notes 
+                        WHERE id = :baby_id
+                        RETURNING id
+                    '''),
+                    {"baby_id": baby_id, "notes": truncated_notes}
+                )
+                await session.commit()
+                return result.first() is not None
+        except Exception as e:
+            logger.error(f"Failed to update notes for baby {baby_id}: {e}")
+            return False
+
+    async def validate_baby_ownership(self, user_id: int, baby_id: int) -> bool:
+        """
+        Validate that a user owns a specific baby.
+        
+        Args:
+            user_id: The ID of the user
+            baby_id: The ID of the baby
+            
+        Returns:
+            True if user owns the baby, False otherwise
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 1 FROM "Nappi"."users" 
+                        WHERE id = :user_id AND baby_id = :baby_id
+                    '''),
+                    {"user_id": user_id, "baby_id": baby_id}
+                )
+                return result.first() is not None
+        except Exception as e:
+            logger.error(f"Failed to validate baby ownership for user {user_id}, baby {baby_id}: {e}")
+            return False
+
+    async def get_baby_by_id(self, baby_id: int) -> Optional[Babies]:
+        """
+        Get a baby by ID.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Babies object or None if not found
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('SELECT * FROM "Nappi"."babies" WHERE id = :baby_id'),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                if row:
+                    return Babies(**row)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get baby {baby_id}: {e}")
+            return None
+
+    # ============================================
+    # Chat Context Methods
+    # ============================================
+
+    async def get_recent_awakenings_with_insights(
+        self,
+        baby_id: int,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent awakening events with their AI insights for chat context.
+        
+        Args:
+            baby_id: The ID of the baby
+            limit: Maximum number of events to return
+            
+        Returns:
+            List of dictionaries with awakening details and AI insights
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            (event_metadata->>'awakened_at')::timestamp as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
+                            event_metadata->>'ai_insight' as ai_insight,
+                            event_metadata->>'last_sensor_readings' as last_sensor_readings
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                        ORDER BY (event_metadata->>'awakened_at')::timestamp DESC
+                        LIMIT :limit
+                    '''),
+                    {"baby_id": baby_id, "limit": limit}
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get recent awakenings for baby {baby_id}: {e}")
+            return []
+
+    async def get_recent_correlations(
+        self,
+        baby_id: int,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent correlation analyses (awakening causes) for chat context.
+        
+        Args:
+            baby_id: The ID of the baby
+            limit: Maximum number of correlations to return
+            
+        Returns:
+            List of dictionaries with correlation details (time, parameters, AI analysis)
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            time,
+                            parameters,
+                            extra_data
+                        FROM "Nappi"."correlations"
+                        WHERE baby_id = :baby_id
+                        ORDER BY time DESC
+                        LIMIT :limit
+                    '''),
+                    {"baby_id": baby_id, "limit": limit}
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get recent correlations for baby {baby_id}: {e}")
+            return []
