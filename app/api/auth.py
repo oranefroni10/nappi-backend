@@ -34,6 +34,7 @@ class RegisterBabyRequest(BaseModel):
     first_name: str
     birthdate: date
     gender: Optional[str] = None
+    notes: Optional[str] = None  # Parent notes: allergies, conditions, health info
 
 
 class SignInRequest(BaseModel):
@@ -95,7 +96,8 @@ async def signup(request: SignUpRequest):
                 id=baby.id,
                 first_name=baby.first_name,
                 last_name=baby.last_name,
-                birthdate=baby.birthdate
+                birthdate=baby.birthdate,
+                notes=getattr(baby, 'notes', None)
             )
 
         return SignUpResponse(
@@ -116,11 +118,15 @@ async def register_baby(request: RegisterBabyRequest):
     """Register baby using user's last name and link to user"""
     try:
         auth = AuthManager()
+        # Truncate notes to 2000 chars max
+        notes = request.notes[:2000] if request.notes else None
+        
         user, baby = await auth.register_baby(
             user_id=request.user_id,
             first_name=request.first_name,
             birthdate=request.birthdate,
-            gender=request.gender
+            gender=request.gender,
+            notes=notes
         )
 
         return AuthResponse(
@@ -131,7 +137,8 @@ async def register_baby(request: RegisterBabyRequest):
                 id=baby.id,
                 first_name=baby.first_name,
                 last_name=baby.last_name,
-                birthdate=baby.birthdate
+                birthdate=baby.birthdate,
+                notes=getattr(baby, 'notes', None)
             ),
             message=f"Baby {baby.first_name} {baby.last_name} registered!",
             first_name=user.first_name,
@@ -154,7 +161,8 @@ async def signin(request: SignInRequest):
                 id=baby.id,
                 first_name=baby.first_name,
                 last_name=baby.last_name,
-                birthdate=baby.birthdate
+                birthdate=baby.birthdate,
+                notes=getattr(baby, 'notes', None)
             )
 
         return AuthResponse(

@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from app.core.database import get_database
-from app.db.models import Babies, SleepRealtimeData, AwakeningEvents, Correlations, DailySummary, OptimalStats
+from app.db.models import Babies, SleepRealtimeData, AwakeningEvents, Correlations, DailySummary, OptimalStats, BabyNote
 from datetime import date as date_type
 from sqlalchemy import text
 
@@ -798,3 +798,295 @@ class BabyDataManager:
         except Exception as e:
             logger.error(f"Failed to get optimal stats for baby {baby_id}: {e}")
             return None
+
+    # ============================================
+    # Baby Notes Methods (Multi-Note System)
+    # ============================================
+
+    async def get_baby_notes(self, baby_id: int) -> List[BabyNote]:
+        """
+        Get all notes for a baby from the baby_notes table.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            List of BabyNote objects
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT id, baby_id, title, content, created_at, updated_at
+                        FROM "Nappi"."baby_notes"
+                        WHERE baby_id = :baby_id
+                        ORDER BY created_at DESC
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                rows = result.mappings().all()
+                return [BabyNote(**row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get notes for baby {baby_id}: {e}")
+            return []
+
+    async def create_baby_note(
+        self, 
+        baby_id: int, 
+        title: str, 
+        content: str
+    ) -> Optional[BabyNote]:
+        """
+        Create a new note for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            title: Note title (max 200 chars)
+            content: Note content
+            
+        Returns:
+            Created BabyNote object or None if failed
+        """
+        try:
+            # Truncate title to 200 chars
+            truncated_title = title[:200] if title else "Untitled"
+            
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        INSERT INTO "Nappi"."baby_notes" (baby_id, title, content, created_at, updated_at)
+                        VALUES (:baby_id, :title, :content, NOW(), NOW())
+                        RETURNING id, baby_id, title, content, created_at, updated_at
+                    '''),
+                    {"baby_id": baby_id, "title": truncated_title, "content": content}
+                )
+                await session.commit()
+                row = result.mappings().first()
+                if row:
+                    logger.info(f"Created note '{truncated_title}' for baby {baby_id}")
+                    return BabyNote(**row)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to create note for baby {baby_id}: {e}")
+            return None
+
+    async def update_baby_note(
+        self,
+        note_id: int,
+        baby_id: int,
+        title: str,
+        content: str
+    ) -> Optional[BabyNote]:
+        """
+        Update an existing note.
+        
+        Args:
+            note_id: The ID of the note to update
+            baby_id: The ID of the baby (for validation)
+            title: Updated title
+            content: Updated content
+            
+        Returns:
+            Updated BabyNote object or None if failed
+        """
+        try:
+            # Truncate title to 200 chars
+            truncated_title = title[:200] if title else "Untitled"
+            
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        UPDATE "Nappi"."baby_notes"
+                        SET title = :title, content = :content, updated_at = NOW()
+                        WHERE id = :note_id AND baby_id = :baby_id
+                        RETURNING id, baby_id, title, content, created_at, updated_at
+                    '''),
+                    {"note_id": note_id, "baby_id": baby_id, "title": truncated_title, "content": content}
+                )
+                await session.commit()
+                row = result.mappings().first()
+                if row:
+                    logger.info(f"Updated note {note_id} for baby {baby_id}")
+                    return BabyNote(**row)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to update note {note_id} for baby {baby_id}: {e}")
+            return None
+
+    async def delete_baby_note(self, note_id: int, baby_id: int) -> bool:
+        """
+        Delete a note.
+        
+        Args:
+            note_id: The ID of the note to delete
+            baby_id: The ID of the baby (for validation)
+            
+        Returns:
+            True if deleted, False otherwise
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        DELETE FROM "Nappi"."baby_notes"
+                        WHERE id = :note_id AND baby_id = :baby_id
+                        RETURNING id
+                    '''),
+                    {"note_id": note_id, "baby_id": baby_id}
+                )
+                await session.commit()
+                deleted = result.first() is not None
+                if deleted:
+                    logger.info(f"Deleted note {note_id} for baby {baby_id}")
+                return deleted
+        except Exception as e:
+            logger.error(f"Failed to delete note {note_id} for baby {baby_id}: {e}")
+            return False
+
+    async def get_baby_notes_formatted(self, baby_id: int) -> str:
+        """
+        Get all notes for a baby formatted as a string for AI context.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Formatted string of all notes or empty string if none
+        """
+        notes = await self.get_baby_notes(baby_id)
+        if not notes:
+            return ""
+        
+        formatted = []
+        for note in notes:
+            formatted.append(f"- [{note.title}]: {note.content}")
+        
+        return "\n".join(formatted)
+
+    async def validate_baby_ownership(self, user_id: int, baby_id: int) -> bool:
+        """
+        Validate that a user owns a specific baby.
+        
+        Args:
+            user_id: The ID of the user
+            baby_id: The ID of the baby
+            
+        Returns:
+            True if user owns the baby, False otherwise
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 1 FROM "Nappi"."users" 
+                        WHERE id = :user_id AND baby_id = :baby_id
+                    '''),
+                    {"user_id": user_id, "baby_id": baby_id}
+                )
+                return result.first() is not None
+        except Exception as e:
+            logger.error(f"Failed to validate baby ownership for user {user_id}, baby {baby_id}: {e}")
+            return False
+
+    async def get_baby_by_id(self, baby_id: int) -> Optional[Babies]:
+        """
+        Get a baby by ID.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Babies object or None if not found
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('SELECT * FROM "Nappi"."babies" WHERE id = :baby_id'),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                if row:
+                    return Babies(**row)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get baby {baby_id}: {e}")
+            return None
+
+    # ============================================
+    # Chat Context Methods
+    # ============================================
+
+    async def get_recent_awakenings_with_insights(
+        self,
+        baby_id: int,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent awakening events with their AI insights for chat context.
+        
+        Args:
+            baby_id: The ID of the baby
+            limit: Maximum number of events to return
+            
+        Returns:
+            List of dictionaries with awakening details and AI insights
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            (event_metadata->>'awakened_at')::timestamp as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
+                            event_metadata->>'ai_insight' as ai_insight,
+                            event_metadata->>'last_sensor_readings' as last_sensor_readings
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                        ORDER BY (event_metadata->>'awakened_at')::timestamp DESC
+                        LIMIT :limit
+                    '''),
+                    {"baby_id": baby_id, "limit": limit}
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get recent awakenings for baby {baby_id}: {e}")
+            return []
+
+    async def get_recent_correlations(
+        self,
+        baby_id: int,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent correlation analyses (awakening causes) for chat context.
+        
+        Args:
+            baby_id: The ID of the baby
+            limit: Maximum number of correlations to return
+            
+        Returns:
+            List of dictionaries with correlation details (time, parameters, AI analysis)
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            time,
+                            parameters,
+                            extra_data
+                        FROM "Nappi"."correlations"
+                        WHERE baby_id = :baby_id
+                        ORDER BY time DESC
+                        LIMIT :limit
+                    '''),
+                    {"baby_id": baby_id, "limit": limit}
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get recent correlations for baby {baby_id}: {e}")
+            return []

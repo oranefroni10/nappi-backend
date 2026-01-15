@@ -29,6 +29,9 @@ class Settings:
     
     # Gemini AI Configuration
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    # Model options: gemini-2.5-pro-preview-05-06 (best), gemini-2.5-flash (fast & reliable)
+    GEMINI_MODEL_CHAT: str = os.getenv("GEMINI_MODEL_CHAT", "models/gemini-2.5-flash")
+    GEMINI_MODEL_INSIGHTS: str = os.getenv("GEMINI_MODEL_INSIGHTS", "models/gemini-2.5-flash")
     
     # Correlation Analysis Configuration
     CORRELATION_CHANGE_THRESHOLD_PERCENT: float = float(
