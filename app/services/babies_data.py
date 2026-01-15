@@ -771,3 +771,30 @@ class BabyDataManager:
         except Exception as e:
             logger.error(f"Failed to update awakening event {event_id} with insight: {e}")
             return False
+
+    async def get_optimal_stats(self, baby_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the optimal sleep conditions for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Dictionary with optimal temperature, humidity, noise or None if no data
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT temperature, humidity, noise, heart_rate
+                        FROM "Nappi"."optimal_stats"
+                        WHERE baby_id = :baby_id
+                        LIMIT 1
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get optimal stats for baby {baby_id}: {e}")
+            return None

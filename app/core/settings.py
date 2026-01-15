@@ -41,6 +41,12 @@ class Settings:
     # Daily Summary Configuration
     DAILY_SUMMARY_HOUR: int = int(os.getenv("DAILY_SUMMARY_HOUR", "10"))
     DAILY_SUMMARY_TIMEZONE: str = os.getenv("DAILY_SUMMARY_TIMEZONE", "Asia/Jerusalem")
+    
+    # Web Push (VAPID) Configuration
+    # Generate keys with: npx web-push generate-vapid-keys
+    VAPID_PUBLIC_KEY: str = os.getenv("VAPID_PUBLIC_KEY", "")
+    VAPID_PRIVATE_KEY: str = os.getenv("VAPID_PRIVATE_KEY", "")
+    VAPID_EMAIL: str = os.getenv("VAPID_EMAIL", "admin@nappi.app")
 
 
 # Create a single instance to be imported throughout the app

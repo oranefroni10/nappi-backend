@@ -22,6 +22,7 @@ from .models import (
     SleepPatternsResponse,
     DailySleepPoint,
     DailySleepResponse,
+    OptimalStatsResponse,
 )
 from ..services.babies_data import BabyDataManager
 from ..services.sleep_patterns import analyze_sleep_patterns
@@ -327,4 +328,51 @@ async def get_sleep_insights(
         "insights": result.insights,
         "correlation_id": result.correlation_id
     }
+
+
+@router.get("/optimal", response_model=OptimalStatsResponse)
+async def get_optimal_stats(
+    baby_id: int = Query(..., description="Baby ID")
+):
+    """
+    Get optimal sleep conditions for a baby.
+    
+    Returns the calculated optimal temperature, humidity, and noise levels
+    based on the baby's best sleep sessions.
+    
+    Returns has_data=False if not enough data has been collected yet.
+    """
+    await validate_baby_exists(baby_id)
+    
+    baby_manager = BabyDataManager()
+    
+    # Query optimal_stats table for this baby
+    optimal = await baby_manager.get_optimal_stats(baby_id)
+    
+    if not optimal:
+        logger.info(f"No optimal stats found for baby {baby_id}")
+        return OptimalStatsResponse(
+            baby_id=baby_id,
+            temperature=None,
+            humidity=None,
+            noise=None,
+            has_data=False
+        )
+    
+    # Check if we have meaningful data (at least one value)
+    has_data = any([
+        optimal.get("temperature") is not None,
+        optimal.get("humidity") is not None,
+        optimal.get("noise") is not None
+    ])
+    
+    logger.info(f"Retrieved optimal stats for baby {baby_id}: has_data={has_data}")
+    
+    return OptimalStatsResponse(
+        baby_id=baby_id,
+        temperature=optimal.get("temperature"),
+        humidity=optimal.get("humidity"),
+        noise=optimal.get("noise"),
+        has_data=has_data
+    )
 

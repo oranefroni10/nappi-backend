@@ -123,3 +123,14 @@ class DailySleepResponse(BaseModel):
     start_date: date
     end_date: date
     data: List[DailySleepPoint]
+
+
+# --- Optimal Stats ---
+
+class OptimalStatsResponse(BaseModel):
+    """Response for baby's optimal sleep conditions."""
+    baby_id: int
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    noise: Optional[float] = None
+    has_data: bool  # False if not enough data yet
