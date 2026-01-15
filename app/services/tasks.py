@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 from .data_miner import HttpSensorSource
 from .babies_data import BabyDataManager
 from .sleep_state import get_sleep_state_manager
+from .alert_service import get_alert_service
 from app.core.utils import SENSOR_TO_ENDPOINT_MAP, SENSOR_TO_DB_COLUMN_MAP
 from app.db.models import Babies
 
@@ -137,6 +138,19 @@ async def _process_single_baby(
                     f"✅ Stored sensor data for baby {baby.id} ({baby.first_name}): "
                     f"{len(sensor_data)}/{len(sensor_names)} sensors"
                 )
+                
+                # Check thresholds and create alerts if needed
+                try:
+                    alert_service = get_alert_service()
+                    await alert_service.check_thresholds(
+                        baby_id=baby.id,
+                        temperature=sensor_data.get("temp_celcius"),
+                        humidity=sensor_data.get("humidity"),
+                        noise_db=sensor_data.get("noise_decibel")
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to check thresholds for baby {baby.id}: {e}")
+                
                 return True
             else:
                 logger.error(f"❌ Failed to store data in DB for baby {baby.id}")

@@ -11,7 +11,7 @@ This service is triggered after an awakening event to:
 
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 # Sensor parameters to analyze
 SENSOR_PARAMS = ["temp_celcius", "humidity", "noise_decibel", "heart_rate"]
+
+# Healthy ranges for baby sleep environment
+HEALTHY_RANGES = {
+    "temp_celcius": {"min": 18.0, "max": 22.0, "unit": "°C", "name": "Room temperature"},
+    "humidity": {"min": 40.0, "max": 60.0, "unit": "%", "name": "Humidity"},
+    "noise_decibel": {"min": 0.0, "max": 50.0, "unit": "dB", "name": "Noise level"},
+    "heart_rate": {"min": 80.0, "max": 160.0, "unit": "bpm", "name": "Heart rate"},
+}
 
 # Lazy-loaded Gemini client
 _gemini_client = None
@@ -40,6 +48,23 @@ def _get_gemini_client():
         except Exception as e:
             logger.error(f"Failed to initialize Gemini client: {e}")
     return _gemini_client
+
+
+# System instruction for consistent AI behavior
+SYSTEM_INSTRUCTION = """You are a warm, knowledgeable pediatric sleep consultant helping parents understand their baby's sleep patterns.
+
+Your role:
+- Analyze sensor data and environmental factors that may affect baby sleep
+- Provide evidence-based, practical advice
+- Be reassuring and supportive, never alarming
+- Keep responses concise (3-4 sentences max)
+- Prioritize actionable tips parents can implement tonight
+
+Remember:
+- Baby sleep is highly variable and often unpredictable
+- Many awakenings are normal and age-appropriate
+- Environmental factors are just one piece of the puzzle
+- When no clear cause is found, normalize the experience for parents"""
 
 
 @dataclass
@@ -63,6 +88,18 @@ class CorrelationResult:
     error: Optional[str] = None
 
 
+@dataclass
+class BabyContext:
+    """Additional context about the baby for AI insights."""
+    name: str
+    age_months: int
+    optimal_temp: Optional[float]
+    optimal_humidity: Optional[float]
+    optimal_noise: Optional[float]
+    recent_awakenings_24h: int
+    last_sensor_values: Dict[str, float]
+
+
 class CorrelationAnalyzer:
     """
     Analyzes sensor data changes around awakening events and generates
@@ -73,6 +110,91 @@ class CorrelationAnalyzer:
         self.baby_manager = BabyDataManager()
         self.change_threshold = settings.CORRELATION_CHANGE_THRESHOLD_PERCENT
         self.time_window_minutes = settings.CORRELATION_TIME_WINDOW_MINUTES
+
+    async def _get_baby_context(
+        self,
+        baby_id: int,
+        awakened_at: datetime,
+        sensor_data: List[Dict[str, Any]]
+    ) -> Optional[BabyContext]:
+        """Fetch additional context about the baby for better AI insights."""
+        try:
+            # Get baby info
+            babies = await self.baby_manager.get_babies_list()
+            baby = next((b for b in babies if b.id == baby_id), None)
+            
+            if not baby:
+                return None
+            
+            # Calculate age in months
+            today = awakened_at.date()
+            age_days = (today - baby.birthdate).days
+            age_months = age_days // 30
+            
+            # Get optimal stats for this baby
+            optimal_stats = await self._get_optimal_stats(baby_id)
+            
+            # Count recent awakenings (last 24 hours)
+            recent_awakenings = await self._count_recent_awakenings(baby_id, awakened_at)
+            
+            # Get last sensor values before awakening
+            last_values = {}
+            if sensor_data:
+                last_reading = sensor_data[-1]
+                for param in SENSOR_PARAMS:
+                    if last_reading.get(param) is not None:
+                        last_values[param] = last_reading[param]
+            
+            return BabyContext(
+                name=baby.first_name,
+                age_months=age_months,
+                optimal_temp=optimal_stats.get("temperature"),
+                optimal_humidity=optimal_stats.get("humidity"),
+                optimal_noise=optimal_stats.get("noise"),
+                recent_awakenings_24h=recent_awakenings,
+                last_sensor_values=last_values
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get baby context: {e}")
+            return None
+
+    async def _get_optimal_stats(self, baby_id: int) -> Dict[str, Optional[float]]:
+        """Get optimal conditions for this baby from optimal_stats table."""
+        try:
+            from sqlalchemy import text
+            async with self.baby_manager.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT temperature, humidity, noise
+                        FROM "Nappi"."optimal_stats"
+                        WHERE baby_id = :baby_id
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                if row:
+                    return dict(row)
+        except Exception as e:
+            logger.warning(f"Failed to get optimal stats: {e}")
+        return {}
+
+    async def _count_recent_awakenings(
+        self,
+        baby_id: int,
+        awakened_at: datetime
+    ) -> int:
+        """Count awakenings in the last 24 hours."""
+        try:
+            start_time = awakened_at - timedelta(hours=24)
+            events = await self.baby_manager.get_awakening_events_for_period(
+                baby_id=baby_id,
+                start_time=start_time,
+                end_time=awakened_at
+            )
+            return len(events)
+        except Exception as e:
+            logger.warning(f"Failed to count recent awakenings: {e}")
+            return 0
 
     async def analyze_awakening(
         self,
@@ -125,15 +247,20 @@ class CorrelationAnalyzer:
             # 4. Build parameters dict for storage
             parameters_dict = self._build_parameters_dict(significant_changes)
 
-            # 5. Generate AI insights using Gemini
+            # 5. Get additional context for better AI insights
+            baby_context = await self._get_baby_context(baby_id, awakened_at, sensor_data)
+
+            # 6. Generate AI insights using Gemini
             insights = await self._generate_gemini_insights(
                 baby_id=baby_id,
                 awakened_at=awakened_at,
                 sleep_duration_minutes=sleep_duration_minutes,
-                parameter_changes=significant_changes
+                parameter_changes=significant_changes,
+                all_changes=parameter_changes,
+                baby_context=baby_context
             )
 
-            # 6. Store in correlations table
+            # 7. Store in correlations table
             correlation_id = await self.baby_manager.insert_correlation(
                 baby_id=baby_id,
                 correlation_time=awakened_at,
@@ -256,7 +383,9 @@ class CorrelationAnalyzer:
         baby_id: int,
         awakened_at: datetime,
         sleep_duration_minutes: float,
-        parameter_changes: List[ParameterChange]
+        parameter_changes: List[ParameterChange],
+        all_changes: List[ParameterChange],
+        baby_context: Optional[BabyContext]
     ) -> Optional[str]:
         """
         Generate AI insights about the awakening using Gemini API.
@@ -268,66 +397,60 @@ class CorrelationAnalyzer:
             logger.warning("Gemini client not available, skipping insights")
             return None
 
-        if not parameter_changes:
-            return "No significant environmental changes detected before awakening."
-
-        # Build prompt
+        # Build prompt with all available context
         prompt = self._build_gemini_prompt(
             awakened_at=awakened_at,
             sleep_duration_minutes=sleep_duration_minutes,
-            parameter_changes=parameter_changes
+            significant_changes=parameter_changes,
+            all_changes=all_changes,
+            baby_context=baby_context
         )
 
-        # Try multiple models in order of preference
-        # Note: Model names change frequently - check https://ai.google.dev/gemini-api/docs/models
-        models_to_try = [
-            "gemini-2.0-flash-exp",      # Latest experimental
-            "gemini-1.5-pro",            # Stable pro model
-            "gemini-pro",                # Legacy stable model
-        ]
+        # Use gemini-2.5-flash - fastest and most reliable
+        model_name = "models/gemini-2.5-flash"
+        
+        # Generation config for consistent, concise responses
+        from google.genai import types
+        generation_config = types.GenerateContentConfig(
+            temperature=0.0,
+            max_output_tokens=400,
+            top_p=0.9,
+        )
         
         loop = asyncio.get_event_loop()
         
-        for model_name in models_to_try:
-            try:
-                logger.debug(f"Trying model {model_name} for baby {baby_id}")
-                response = await loop.run_in_executor(
-                    None,
-                    lambda m=model_name: client.models.generate_content(
-                        model=m,
-                        contents=prompt
-                    )
+        try:
+            logger.debug(f"Calling Gemini ({model_name}) for baby {baby_id}")
+            
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=generation_config,
                 )
-                
-                if response and response.text:
-                    logger.info(f"Generated Gemini insights for baby {baby_id} using {model_name}")
-                    return response.text.strip()
-                else:
-                    logger.warning(f"Empty response from {model_name} for baby {baby_id}")
-                    continue
+            )
+            
+            if response and response.text:
+                logger.info(f"Generated Gemini insights for baby {baby_id}")
+                return response.text.strip()
+            else:
+                logger.warning(f"Empty response from Gemini for baby {baby_id}")
+                return None
 
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str or "quota" in error_str.lower() or "exhausted" in error_str.lower():
-                    logger.warning(f"Rate limit on {model_name}, trying next model...")
-                    continue
-                elif "404" in error_str or "not found" in error_str.lower():
-                    logger.debug(f"Model {model_name} not available, trying next...")
-                    continue
-                else:
-                    logger.error(f"Error with {model_name}: {e}")
-                    continue
-        
-        logger.warning(f"All Gemini models exhausted for baby {baby_id}")
-        return None
+        except Exception as e:
+            logger.error(f"Gemini API error for baby {baby_id}: {e}")
+            return None
 
     def _build_gemini_prompt(
         self,
         awakened_at: datetime,
         sleep_duration_minutes: float,
-        parameter_changes: List[ParameterChange]
+        significant_changes: List[ParameterChange],
+        all_changes: List[ParameterChange],
+        baby_context: Optional[BabyContext]
     ) -> str:
-        """Build the prompt for Gemini API."""
+        """Build an enriched prompt for Gemini API with full context."""
         
         # Format time of day
         hour = awakened_at.hour
@@ -340,39 +463,154 @@ class CorrelationAnalyzer:
         else:
             time_of_day = "night"
 
-        # Format parameter changes
-        changes_text = []
-        for change in parameter_changes:
-            param_display = {
-                "temp_celcius": "Room temperature",
-                "humidity": "Room humidity",
-                "noise_decibel": "Noise level",
-                "heart_rate": "Heart rate"
-            }.get(change.param_name, change.param_name)
+        # Build baby info section
+        baby_info = ""
+        if baby_context:
+            age_str = self._format_age(baby_context.age_months)
+            baby_info = f"""
+Baby Information:
+- Name: {baby_context.name}
+- Age: {age_str}
+- Awakenings in last 24 hours: {baby_context.recent_awakenings_24h} (including this one)
+"""
+
+        # Build current sensor values section
+        current_values_text = ""
+        if baby_context and baby_context.last_sensor_values:
+            values_lines = []
+            for param, value in baby_context.last_sensor_values.items():
+                info = HEALTHY_RANGES.get(param, {})
+                name = info.get("name", param)
+                unit = info.get("unit", "")
+                min_val = info.get("min", 0)
+                max_val = info.get("max", 100)
+                
+                # Check if value is in healthy range
+                status = "✓ normal"
+                if value < min_val:
+                    status = "⚠ below recommended"
+                elif value > max_val:
+                    status = "⚠ above recommended"
+                
+                values_lines.append(f"- {name}: {value}{unit} ({status}, healthy range: {min_val}-{max_val}{unit})")
             
-            changes_text.append(
-                f"- {param_display}: {change.direction}d by {change.change_percent}% "
-                f"(from {change.start_value} to {change.end_value})"
-            )
+            current_values_text = "\nCurrent Room Conditions (at time of awakening):\n" + "\n".join(values_lines)
 
-        changes_formatted = "\n".join(changes_text)
+        # Build optimal conditions comparison
+        optimal_comparison = ""
+        if baby_context:
+            comparisons = []
+            if baby_context.optimal_temp and baby_context.last_sensor_values.get("temp_celcius"):
+                current_temp = baby_context.last_sensor_values["temp_celcius"]
+                diff = current_temp - baby_context.optimal_temp
+                if abs(diff) > 1:
+                    direction = "warmer" if diff > 0 else "cooler"
+                    comparisons.append(f"- Temperature is {abs(diff):.1f}°C {direction} than this baby's optimal ({baby_context.optimal_temp}°C)")
+            
+            if baby_context.optimal_humidity and baby_context.last_sensor_values.get("humidity"):
+                current_hum = baby_context.last_sensor_values["humidity"]
+                diff = current_hum - baby_context.optimal_humidity
+                if abs(diff) > 5:
+                    direction = "higher" if diff > 0 else "lower"
+                    comparisons.append(f"- Humidity is {abs(diff):.0f}% {direction} than optimal ({baby_context.optimal_humidity}%)")
+            
+            if baby_context.optimal_noise and baby_context.last_sensor_values.get("noise_decibel"):
+                current_noise = baby_context.last_sensor_values["noise_decibel"]
+                diff = current_noise - baby_context.optimal_noise
+                if abs(diff) > 5:
+                    direction = "louder" if diff > 0 else "quieter"
+                    comparisons.append(f"- Noise is {abs(diff):.0f}dB {direction} than optimal ({baby_context.optimal_noise}dB)")
+            
+            if comparisons:
+                optimal_comparison = "\nComparison to Baby's Historical Optimal Conditions:\n" + "\n".join(comparisons)
 
-        prompt = f"""You are a pediatric sleep consultant AI. Analyze the following baby sleep data and provide brief, actionable insights about what may have caused the baby to wake up.
+        # Format significant changes
+        changes_text = ""
+        if significant_changes:
+            changes_lines = []
+            for change in significant_changes:
+                info = HEALTHY_RANGES.get(change.param_name, {})
+                name = info.get("name", change.param_name)
+                unit = info.get("unit", "")
+                
+                changes_lines.append(
+                    f"- {name}: {change.direction}d by {change.change_percent:.0f}% "
+                    f"(from {change.start_value}{unit} to {change.end_value}{unit})"
+                )
+            changes_text = "\nSignificant Environmental Changes (in the hour before awakening):\n" + "\n".join(changes_lines)
+        else:
+            changes_text = "\nSignificant Environmental Changes: None detected (all changes < 10%)"
 
-Context:
-- Time of awakening: {time_of_day} ({awakened_at.strftime('%H:%M')})
-- Sleep duration before waking: {sleep_duration_minutes:.0f} minutes
+        # Build sleep duration context
+        sleep_hours = sleep_duration_minutes / 60
+        if baby_context:
+            age_months = baby_context.age_months
+            # Expected sleep varies by age
+            if age_months < 4:
+                expected_night = "8-9 hours"
+                expected_nap = "30min-2 hours"
+            elif age_months < 12:
+                expected_night = "9-11 hours"
+                expected_nap = "1-2 hours"
+            else:
+                expected_night = "10-12 hours"
+                expected_nap = "1-3 hours"
+            
+            if time_of_day in ["morning", "afternoon"]:
+                sleep_context = f"(typical nap duration for this age: {expected_nap})"
+            else:
+                sleep_context = f"(typical night sleep stretch for this age: {expected_night})"
+        else:
+            sleep_context = ""
 
-Environmental changes detected in the hour before awakening:
-{changes_formatted}
+        prompt = f"""{SYSTEM_INSTRUCTION}
 
-Provide a concise analysis (2-3 sentences) explaining:
-1. Which environmental factor(s) most likely contributed to the awakening
-2. One practical suggestion for parents to improve sleep conditions
+---
 
-Keep the response friendly and helpful. Focus on actionable advice."""
+=== AWAKENING EVENT ===
+- Time: {awakened_at.strftime('%H:%M')} ({time_of_day})
+- Sleep duration before waking: {sleep_hours:.1f} hours ({sleep_duration_minutes:.0f} minutes) {sleep_context}
+{baby_info}{current_values_text}{optimal_comparison}{changes_text}
+
+=== HEALTHY REFERENCE RANGES ===
+- Room temperature: 18-22°C (babies sleep best in slightly cool rooms)
+- Humidity: 40-60% (prevents dry airways and skin)
+- Noise: under 50dB (quiet environment, though white noise up to 50dB can help)
+- Baby heart rate: 80-160 bpm (varies by age and activity)
+
+=== YOUR TASK ===
+Provide a brief, helpful analysis (3-4 sentences) that:
+
+1. **Identifies the most likely cause** of this awakening based on the data above
+2. **Gives one specific, actionable tip** the parents can try tonight
+3. **Reassures or contextualizes** if the awakening seems normal for the baby's age
+
+Guidelines:
+- Be warm and supportive, not alarming
+- If no significant changes detected, consider other factors (age-appropriate wake patterns, hunger, developmental leaps)
+- Prioritize the most impactful factor if multiple issues exist
+- Keep advice practical and achievable
+
+Respond in a conversational tone as if speaking directly to the parents."""
 
         return prompt
+
+    def _format_age(self, age_months: int) -> str:
+        """Format age in a readable way."""
+        if age_months < 1:
+            return "newborn"
+        elif age_months == 1:
+            return "1 month old"
+        elif age_months < 12:
+            return f"{age_months} months old"
+        elif age_months == 12:
+            return "1 year old"
+        else:
+            years = age_months // 12
+            months = age_months % 12
+            if months == 0:
+                return f"{years} year{'s' if years > 1 else ''} old"
+            return f"{years} year{'s' if years > 1 else ''} and {months} month{'s' if months > 1 else ''} old"
 
 
 # Convenience function for direct use
@@ -393,3 +631,85 @@ async def analyze_awakening(
         awakened_at=awakened_at,
         sleep_duration_minutes=sleep_duration_minutes
     )
+
+
+async def generate_quick_insight(
+    baby_id: int,
+    awakened_at: datetime,
+    sleep_duration_minutes: float,
+    last_sensor_readings: Optional[Dict[str, Any]] = None
+) -> Optional[str]:
+    """
+    Generate a quick 1-2 line insight about an awakening event.
+    
+    This is called automatically on sleep-end to populate the extra_data column.
+    Uses a simpler prompt for faster, more concise responses.
+    """
+    client = _get_gemini_client()
+    
+    if not client:
+        logger.warning("Gemini client not available for quick insight")
+        return None
+    
+    # Format time
+    hour = awakened_at.hour
+    if 5 <= hour < 12:
+        time_of_day = "morning"
+    elif 12 <= hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= hour < 21:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+    
+    sleep_hours = sleep_duration_minutes / 60
+    
+    # Build sensor info if available
+    sensor_info = ""
+    if last_sensor_readings:
+        parts = []
+        if last_sensor_readings.get("temp_celcius"):
+            temp = last_sensor_readings["temp_celcius"]
+            status = "warm" if temp > 22 else ("cool" if temp < 18 else "normal")
+            parts.append(f"room {status} ({temp}°C)")
+        if last_sensor_readings.get("noise_decibel"):
+            noise = last_sensor_readings["noise_decibel"]
+            status = "noisy" if noise > 50 else "quiet"
+            parts.append(f"{status} ({noise}dB)")
+        if last_sensor_readings.get("humidity"):
+            hum = last_sensor_readings["humidity"]
+            status = "humid" if hum > 60 else ("dry" if hum < 40 else "normal humidity")
+            parts.append(f"{status} ({hum}%)")
+        if parts:
+            sensor_info = f"Room conditions: {', '.join(parts)}."
+    
+    # Simple prompt for quick insight
+    prompt = f"""Baby woke up at {awakened_at.strftime('%H:%M')} ({time_of_day}) after sleeping {sleep_hours:.1f} hours.
+{sensor_info}
+
+In exactly 1-2 short sentences, explain the most likely reason for waking and one quick tip. Be warm and concise."""
+
+    try:
+        from google.genai import types
+        
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model="models/gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=100,  # Keep it short
+                ),
+            )
+        )
+        
+        if response and response.text:
+            logger.info(f"Generated quick insight for baby {baby_id}")
+            return response.text.strip()
+        
+    except Exception as e:
+        logger.error(f"Quick insight generation failed for baby {baby_id}: {e}")
+    
+    return None
