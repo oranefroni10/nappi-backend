@@ -3,11 +3,16 @@ Sensor Event Endpoints - Handles sleep start/end events from M5 sensors.
 
 These endpoints allow the M5 sensors to notify the backend when a baby
 falls asleep or wakes up, enabling targeted sensor data collection.
+
+Also provides parent intervention endpoint for manual sleep state override
+with 20-minute cooldown to ignore sensor events after intervention.
 """
 
 import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from .models import (
     SleepEventRequest,
@@ -15,13 +20,40 @@ from .models import (
     AwakeningEventResponse,
     LastSensorReadings,
 )
-from ..services.sleep_state import get_sleep_state_manager
+from ..services.sleep_state import get_sleep_state_manager, INTERVENTION_COOLDOWN_MINUTES
 from ..services.babies_data import BabyDataManager
-from ..services.correlation_analyzer import analyze_awakening
+from ..services.correlation_analyzer import generate_quick_insight
+from ..services.alert_service import get_alert_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sensor", tags=["sensor-events"])
+
+
+# ============================================
+# Intervention Models
+# ============================================
+
+class InterventionRequest(BaseModel):
+    """Request for parent intervention."""
+    baby_id: int
+    action: str  # "mark_asleep" | "mark_awake"
+
+
+class InterventionResponse(BaseModel):
+    """Response for parent intervention."""
+    baby_id: int
+    status: str  # "sleeping" | "awake"
+    cooldown_minutes: int
+    cooldown_until: str
+    message: str
+
+
+class CooldownIgnoredResponse(BaseModel):
+    """Response when event is ignored due to cooldown."""
+    ignored: bool
+    reason: str
+    cooldown_remaining_minutes: Optional[int]
 
 
 @router.post("/sleep-start", response_model=SleepStartResponse)
@@ -30,9 +62,25 @@ async def sleep_start(request: SleepEventRequest):
     Called by M5 sensor when it detects that a baby has fallen asleep.
     
     This starts sensor data collection for the specified baby.
+    
+    Note: If a parent intervention cooldown is active, this event will be ignored.
     """
     baby_id = request.baby_id
     logger.info(f"Received sleep-start event for baby {baby_id}")
+    
+    # Check if in intervention cooldown - ignore sensor events
+    sleep_state = get_sleep_state_manager()
+    if await sleep_state.is_in_cooldown(baby_id):
+        remaining = await sleep_state.get_cooldown_remaining(baby_id)
+        logger.info(f"Ignoring sensor sleep-start for baby {baby_id} - in cooldown ({remaining} min remaining)")
+        raise HTTPException(
+            status_code=200,  # Not an error, just ignored
+            detail={
+                "ignored": True,
+                "reason": "intervention_cooldown",
+                "cooldown_remaining_minutes": remaining
+            }
+        )
     
     # Validate baby exists
     baby_manager = BabyDataManager()
@@ -44,7 +92,6 @@ async def sleep_start(request: SleepEventRequest):
         raise HTTPException(status_code=404, detail=f"Baby with id {baby_id} not found")
     
     # Register baby as sleeping
-    sleep_state = get_sleep_state_manager()
     session = await sleep_state.start_sleep(baby_id)
     
     return SleepStartResponse(
@@ -61,13 +108,28 @@ async def sleep_end(request: SleepEventRequest):
     
     This stops sensor data collection for the specified baby and
     records an awakening event with full metadata.
+    
+    Note: If a parent intervention cooldown is active, this event will be ignored.
     """
     baby_id = request.baby_id
     awakened_at = datetime.utcnow()
     logger.info(f"Received sleep-end event for baby {baby_id}")
     
-    # End the sleep session
+    # Check if in intervention cooldown - ignore sensor events
     sleep_state = get_sleep_state_manager()
+    if await sleep_state.is_in_cooldown(baby_id):
+        remaining = await sleep_state.get_cooldown_remaining(baby_id)
+        logger.info(f"Ignoring sensor sleep-end for baby {baby_id} - in cooldown ({remaining} min remaining)")
+        raise HTTPException(
+            status_code=200,  # Not an error, just ignored
+            detail={
+                "ignored": True,
+                "reason": "intervention_cooldown",
+                "cooldown_remaining_minutes": remaining
+            }
+        )
+    
+    # End the sleep session
     session = await sleep_state.end_sleep(baby_id)
     
     if session is None:
@@ -121,24 +183,35 @@ async def sleep_end(request: SleepEventRequest):
         f"slept for {sleep_duration:.1f} minutes"
     )
     
-    # Trigger correlation analysis (runs async, logs results)
-    correlation_result = await analyze_awakening(
-        baby_id=baby_id,
-        awakened_at=awakened_at,
-        sleep_duration_minutes=sleep_duration
-    )
+    # Generate quick AI insight and update the event (non-blocking)
+    try:
+        quick_insight = await generate_quick_insight(
+            baby_id=baby_id,
+            awakened_at=awakened_at,
+            sleep_duration_minutes=sleep_duration,
+            last_sensor_readings=last_readings
+        )
+        
+        if quick_insight:
+            await baby_manager.update_awakening_event_insight(event_id, quick_insight)
+            logger.info(f"Added AI insight to awakening event {event_id}")
+    except Exception as e:
+        # Don't fail the endpoint if insight generation fails
+        logger.warning(f"Failed to generate quick insight for baby {baby_id}: {e}")
     
-    if correlation_result.success:
-        logger.info(
-            f"Correlation analysis complete for baby {baby_id}: "
-            f"correlation_id={correlation_result.correlation_id}, "
-            f"params={list(correlation_result.parameters.keys())}"
+    # Create awakening alert (sensor detected wake - parent should be notified)
+    try:
+        alert_service = get_alert_service()
+        await alert_service.create_awakening_alert(
+            baby_id=baby_id,
+            sleep_duration_minutes=sleep_duration,
+            awakened_at=awakened_at,
+            last_sensor_readings=last_readings
         )
-    else:
-        logger.warning(
-            f"Correlation analysis failed for baby {baby_id}: "
-            f"{correlation_result.error}"
-        )
+        logger.info(f"Created awakening alert for baby {baby_id}")
+    except Exception as e:
+        # Don't fail the endpoint if alert creation fails
+        logger.warning(f"Failed to create awakening alert for baby {baby_id}: {e}")
     
     return AwakeningEventResponse(
         baby_id=baby_id,
@@ -227,5 +300,98 @@ async def baby_away(request: SleepEventRequest):
         "away_at": away_at.isoformat(),
         "tracking_duration_minutes": round(tracking_duration, 2),
         "message": f"Sleep tracking stopped for baby {baby_id} (baby away from sensor)"
+    }
+
+
+# ============================================
+# Parent Intervention Endpoints
+# ============================================
+
+@router.post("/intervention", response_model=InterventionResponse)
+async def parent_intervention(request: InterventionRequest):
+    """
+    Parent manually sets sleep state, overriding sensor detection.
+    
+    This endpoint:
+    - Does NOT create an alert (parent already knows)
+    - Starts a 20-minute cooldown to ignore sensor sleep/awake events
+    - Immediately changes the sleep state
+    
+    Use when:
+    - Parent sees via camera that baby is awake/asleep but sensor got it wrong
+    - Parent wants to manually start/stop sleep tracking
+    
+    Args:
+        request.baby_id: The baby ID
+        request.action: "mark_asleep" or "mark_awake"
+    """
+    baby_id = request.baby_id
+    action = request.action.lower()
+    
+    if action not in ("mark_asleep", "mark_awake"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid action. Must be 'mark_asleep' or 'mark_awake'"
+        )
+    
+    logger.info(f"Parent intervention for baby {baby_id}: {action}")
+    
+    # Validate baby exists
+    baby_manager = BabyDataManager()
+    babies = await baby_manager.get_babies_list()
+    baby_exists = any(b.id == baby_id for b in babies)
+    
+    if not baby_exists:
+        raise HTTPException(status_code=404, detail=f"Baby with id {baby_id} not found")
+    
+    sleep_state = get_sleep_state_manager()
+    
+    # Start cooldown - ignore sensor events for 20 minutes
+    cooldown_until = await sleep_state.start_intervention_cooldown(baby_id)
+    
+    if action == "mark_asleep":
+        # Start sleep session
+        session = await sleep_state.start_sleep(baby_id)
+        return InterventionResponse(
+            baby_id=baby_id,
+            status="sleeping",
+            cooldown_minutes=INTERVENTION_COOLDOWN_MINUTES,
+            cooldown_until=cooldown_until.isoformat(),
+            message=f"Baby {baby_id} marked as sleeping. Sensor events ignored for {INTERVENTION_COOLDOWN_MINUTES} minutes."
+        )
+    else:  # mark_awake
+        # End sleep session WITHOUT recording awakening event
+        # (parent already knows, no alert needed)
+        session = await sleep_state.end_sleep(baby_id)
+        
+        if session:
+            duration = (datetime.utcnow() - session.start_time).total_seconds() / 60.0
+            logger.info(f"Parent intervention ended sleep for baby {baby_id} after {duration:.1f} minutes")
+        
+        return InterventionResponse(
+            baby_id=baby_id,
+            status="awake",
+            cooldown_minutes=INTERVENTION_COOLDOWN_MINUTES,
+            cooldown_until=cooldown_until.isoformat(),
+            message=f"Baby {baby_id} marked as awake. Sensor events ignored for {INTERVENTION_COOLDOWN_MINUTES} minutes."
+        )
+
+
+@router.get("/cooldown-status/{baby_id}")
+async def get_cooldown_status(baby_id: int):
+    """
+    Check if a baby is in intervention cooldown.
+    
+    Returns the cooldown status and remaining time if applicable.
+    """
+    sleep_state = get_sleep_state_manager()
+    in_cooldown = await sleep_state.is_in_cooldown(baby_id)
+    remaining = await sleep_state.get_cooldown_remaining(baby_id) if in_cooldown else None
+    
+    return {
+        "baby_id": baby_id,
+        "in_cooldown": in_cooldown,
+        "cooldown_remaining_minutes": remaining,
+        "message": f"Sensor events will be ignored for {remaining} more minutes" if in_cooldown else "No active cooldown"
     }
 

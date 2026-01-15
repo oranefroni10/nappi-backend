@@ -492,5 +492,309 @@ class BabyDataManager:
             logger.error(f"Failed to upsert optimal stats for baby {baby_id}: {e}")
             return None
 
+    # ============================================
+    # Statistics Methods
+    # ============================================
 
+    async def get_daily_summaries_range(
+        self,
+        baby_id: int,
+        start_date: date_type,
+        end_date: date_type
+    ) -> List[Dict[str, Any]]:
+        """
+        Get daily summaries for a baby within a date range.
+        
+        Args:
+            baby_id: The ID of the baby
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            
+        Returns:
+            List of daily summary dictionaries with sensor averages
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT summary_date, avg_humidity, avg_temp, avg_noise
+                        FROM "Nappi"."daily_summary"
+                        WHERE baby_id = :baby_id
+                          AND summary_date >= :start_date
+                          AND summary_date <= :end_date
+                        ORDER BY summary_date ASC
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "start_date": start_date,
+                        "end_date": end_date
+                    }
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get daily summaries range for baby {baby_id}: {e}"
+            )
+            return []
 
+    async def get_sleep_sessions_for_month(
+        self,
+        baby_id: int,
+        year: int,
+        month: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sleep sessions for a baby in a specific month.
+        Extracts sleep_started_at and awakened_at from event_metadata.
+        
+        Args:
+            baby_id: The ID of the baby
+            year: Year (e.g., 2026)
+            month: Month (1-12)
+            
+        Returns:
+            List of dictionaries with sleep_started_at, awakened_at, duration_minutes
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            event_metadata->>'sleep_started_at' as sleep_started_at,
+                            event_metadata->>'awakened_at' as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as duration_minutes
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                          AND EXTRACT(YEAR FROM (event_metadata->>'awakened_at')::timestamp) = :year
+                          AND EXTRACT(MONTH FROM (event_metadata->>'awakened_at')::timestamp) = :month
+                        ORDER BY (event_metadata->>'sleep_started_at')::timestamp ASC
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "year": year,
+                        "month": month
+                    }
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get sleep sessions for baby {baby_id} ({year}-{month}): {e}"
+            )
+            return []
+
+    async def get_sleep_sessions_for_range(
+        self,
+        baby_id: int,
+        start_date: date_type,
+        end_date: date_type
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sleep sessions for a baby within a date range.
+        Used for calculating daily sleep totals.
+        
+        Args:
+            baby_id: The ID of the baby
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            
+        Returns:
+            List of dictionaries with awakened_at date and duration_minutes
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            DATE((event_metadata->>'awakened_at')::timestamp) as session_date,
+                            (event_metadata->>'sleep_duration_minutes')::float as duration_minutes
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                          AND DATE((event_metadata->>'awakened_at')::timestamp) >= :start_date
+                          AND DATE((event_metadata->>'awakened_at')::timestamp) <= :end_date
+                        ORDER BY (event_metadata->>'awakened_at')::timestamp ASC
+                    '''),
+                    {
+                        "baby_id": baby_id,
+                        "start_date": start_date,
+                        "end_date": end_date
+                    }
+                )
+                rows = result.mappings().all()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(
+                f"Failed to get sleep sessions for baby {baby_id} ({start_date} to {end_date}): {e}"
+            )
+            return []
+
+    async def baby_exists(self, baby_id: int) -> bool:
+        """
+        Check if a baby exists in the database.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            True if baby exists, False otherwise
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('SELECT 1 FROM "Nappi"."babies" WHERE id = :baby_id'),
+                    {"baby_id": baby_id}
+                )
+                return result.first() is not None
+        except Exception as e:
+            logger.error(f"Failed to check if baby {baby_id} exists: {e}")
+            return False
+
+    async def get_awakening_event_by_id(
+        self,
+        event_id: int,
+        baby_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific awakening event by ID.
+        
+        Args:
+            event_id: The ID of the awakening event
+            baby_id: The ID of the baby (for validation)
+            
+        Returns:
+            Dictionary with event data or None if not found
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            baby_id,
+                            (event_metadata->>'sleep_started_at')::timestamp as sleep_started_at,
+                            (event_metadata->>'awakened_at')::timestamp as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
+                            event_metadata
+                        FROM "Nappi"."awakening_events"
+                        WHERE id = :event_id AND baby_id = :baby_id
+                    '''),
+                    {"event_id": event_id, "baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get awakening event {event_id}: {e}")
+            return None
+
+    async def get_latest_awakening_event(
+        self,
+        baby_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent awakening event for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Dictionary with event data or None if no events found
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT 
+                            id,
+                            baby_id,
+                            (event_metadata->>'sleep_started_at')::timestamp as sleep_started_at,
+                            (event_metadata->>'awakened_at')::timestamp as awakened_at,
+                            (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
+                            event_metadata
+                        FROM "Nappi"."awakening_events"
+                        WHERE baby_id = :baby_id
+                        ORDER BY (event_metadata->>'awakened_at')::timestamp DESC
+                        LIMIT 1
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get latest awakening event for baby {baby_id}: {e}")
+            return None
+
+    async def update_awakening_event_insight(
+        self,
+        event_id: int,
+        insight: str
+    ) -> bool:
+        """
+        Update an awakening event's event_metadata with AI-generated insight.
+        
+        Args:
+            event_id: The ID of the awakening event
+            insight: The AI-generated insight text
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import json
+            async with self.database.session() as session:
+                # Get current event_metadata, add insight, and update
+                result = await session.execute(
+                    text('''
+                        SELECT event_metadata FROM "Nappi"."awakening_events"
+                        WHERE id = :event_id
+                    '''),
+                    {"event_id": event_id}
+                )
+                row = result.first()
+                
+                if row:
+                    current_metadata = row[0] or {}
+                    current_metadata["ai_insight"] = insight
+                    
+                    await session.execute(
+                        text('''
+                            UPDATE "Nappi"."awakening_events"
+                            SET event_metadata = :metadata
+                            WHERE id = :event_id
+                        '''),
+                        {"event_id": event_id, "metadata": json.dumps(current_metadata)}
+                    )
+                    await session.commit()
+                    logger.info(f"Updated awakening event {event_id} with AI insight")
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Failed to update awakening event {event_id} with insight: {e}")
+            return False
+
+    async def get_optimal_stats(self, baby_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the optimal sleep conditions for a baby.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Dictionary with optimal temperature, humidity, noise or None if no data
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        SELECT temperature, humidity, noise, heart_rate
+                        FROM "Nappi"."optimal_stats"
+                        WHERE baby_id = :baby_id
+                        LIMIT 1
+                    '''),
+                    {"baby_id": baby_id}
+                )
+                row = result.mappings().first()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get optimal stats for baby {baby_id}: {e}")
+            return None
