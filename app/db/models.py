@@ -210,3 +210,22 @@ class BabyResponse(BaseModel):
         json_encoders = {
             date: lambda v: v.isoformat() if v else None,
         }
+
+
+class BabyNote(BaseModel):
+    """
+    Represents an individual note about a baby.
+    Used for allergies, health conditions, preferences, etc.
+    """
+    id: int
+    baby_id: int
+    title: str
+    content: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+        }

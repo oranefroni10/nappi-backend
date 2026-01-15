@@ -1,60 +1,77 @@
 """
 Baby API - Endpoints for baby-related operations.
 
-Provides:
-- GET /babies/{baby_id}/notes - Get baby notes
-- PUT /babies/{baby_id}/notes - Update baby notes
+Provides multi-note CRUD:
+- GET /babies/{baby_id}/notes - List all notes for a baby
+- POST /babies/{baby_id}/notes - Create a new note
+- PUT /babies/{baby_id}/notes/{note_id} - Update a note
+- DELETE /babies/{baby_id}/notes/{note_id} - Delete a note
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from ..services.babies_data import BabyDataManager
+from ..db.models import BabyNote
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/babies", tags=["babies"])
-
-# Maximum notes length
-MAX_NOTES_LENGTH = 2000
 
 
 # ============================================
 # Request/Response Models
 # ============================================
 
-class NotesResponse(BaseModel):
-    """Response containing baby notes."""
+class NoteCreate(BaseModel):
+    """Request to create a new note."""
+    title: str
+    content: str
+
+
+class NoteUpdate(BaseModel):
+    """Request to update an existing note."""
+    title: str
+    content: str
+
+
+class NoteResponse(BaseModel):
+    """Response containing a single note."""
+    id: int
     baby_id: int
-    notes: Optional[str] = None
+    title: str
+    content: str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
-class UpdateNotesRequest(BaseModel):
-    """Request to update baby notes."""
-    notes: str
+class NotesListResponse(BaseModel):
+    """Response containing list of notes."""
+    baby_id: int
+    notes: List[NoteResponse]
 
 
-class UpdateNotesResponse(BaseModel):
-    """Response after updating notes."""
+class DeleteResponse(BaseModel):
+    """Response for delete operation."""
     success: bool
-    notes: str
+    message: str
 
 
 # ============================================
 # Endpoints
 # ============================================
 
-@router.get("/{baby_id}/notes", response_model=NotesResponse)
-async def get_baby_notes(
+@router.get("/{baby_id}/notes", response_model=NotesListResponse)
+async def list_notes(
     baby_id: int,
     user_id: int = Query(..., description="User ID for ownership validation")
 ):
     """
-    Get notes for a baby.
+    Get all notes for a baby.
     
-    Validates that the user owns this baby before returning notes.
+    Returns a list of notes ordered by creation date (newest first).
     """
     baby_manager = BabyDataManager()
     
@@ -67,23 +84,32 @@ async def get_baby_notes(
     
     notes = await baby_manager.get_baby_notes(baby_id)
     
-    return NotesResponse(
+    return NotesListResponse(
         baby_id=baby_id,
-        notes=notes
+        notes=[
+            NoteResponse(
+                id=n.id,
+                baby_id=n.baby_id,
+                title=n.title,
+                content=n.content,
+                created_at=n.created_at.isoformat() if n.created_at else None,
+                updated_at=n.updated_at.isoformat() if n.updated_at else None,
+            )
+            for n in notes
+        ]
     )
 
 
-@router.put("/{baby_id}/notes", response_model=UpdateNotesResponse)
-async def update_baby_notes(
+@router.post("/{baby_id}/notes", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
+async def create_note(
     baby_id: int,
-    request: UpdateNotesRequest,
+    request: NoteCreate,
     user_id: int = Query(..., description="User ID for ownership validation")
 ):
     """
-    Update notes for a baby.
+    Create a new note for a baby.
     
-    Notes are truncated to 2000 characters if longer.
-    Validates that the user owns this baby before updating.
+    Title is limited to 200 characters.
     """
     baby_manager = BabyDataManager()
     
@@ -91,24 +117,137 @@ async def update_baby_notes(
     if not await baby_manager.validate_baby_ownership(user_id, baby_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: you don't have permission to update this baby's notes"
+            detail="Access denied: you don't have permission to add notes for this baby"
         )
     
-    # Truncate notes if too long
-    notes = request.notes[:MAX_NOTES_LENGTH] if request.notes else ""
+    # Validate input
+    if not request.title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Title cannot be empty"
+        )
     
-    # Update notes
-    success = await baby_manager.update_baby_notes(baby_id, notes)
+    if not request.content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content cannot be empty"
+        )
+    
+    # Create note
+    note = await baby_manager.create_baby_note(
+        baby_id=baby_id,
+        title=request.title.strip(),
+        content=request.content.strip()
+    )
+    
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create note"
+        )
+    
+    logger.info(f"Created note '{note.title}' for baby {baby_id}")
+    
+    return NoteResponse(
+        id=note.id,
+        baby_id=note.baby_id,
+        title=note.title,
+        content=note.content,
+        created_at=note.created_at.isoformat() if note.created_at else None,
+        updated_at=note.updated_at.isoformat() if note.updated_at else None,
+    )
+
+
+@router.put("/{baby_id}/notes/{note_id}", response_model=NoteResponse)
+async def update_note(
+    baby_id: int,
+    note_id: int,
+    request: NoteUpdate,
+    user_id: int = Query(..., description="User ID for ownership validation")
+):
+    """
+    Update an existing note.
+    
+    Title is limited to 200 characters.
+    """
+    baby_manager = BabyDataManager()
+    
+    # Validate ownership
+    if not await baby_manager.validate_baby_ownership(user_id, baby_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: you don't have permission to update this note"
+        )
+    
+    # Validate input
+    if not request.title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Title cannot be empty"
+        )
+    
+    if not request.content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content cannot be empty"
+        )
+    
+    # Update note
+    note = await baby_manager.update_baby_note(
+        note_id=note_id,
+        baby_id=baby_id,
+        title=request.title.strip(),
+        content=request.content.strip()
+    )
+    
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or you don't have permission to update it"
+        )
+    
+    logger.info(f"Updated note {note_id} for baby {baby_id}")
+    
+    return NoteResponse(
+        id=note.id,
+        baby_id=note.baby_id,
+        title=note.title,
+        content=note.content,
+        created_at=note.created_at.isoformat() if note.created_at else None,
+        updated_at=note.updated_at.isoformat() if note.updated_at else None,
+    )
+
+
+@router.delete("/{baby_id}/notes/{note_id}", response_model=DeleteResponse)
+async def delete_note(
+    baby_id: int,
+    note_id: int,
+    user_id: int = Query(..., description="User ID for ownership validation")
+):
+    """
+    Delete a note.
+    """
+    baby_manager = BabyDataManager()
+    
+    # Validate ownership
+    if not await baby_manager.validate_baby_ownership(user_id, baby_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: you don't have permission to delete this note"
+        )
+    
+    # Delete note
+    success = await baby_manager.delete_baby_note(note_id=note_id, baby_id=baby_id)
     
     if not success:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update notes"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or you don't have permission to delete it"
         )
     
-    logger.info(f"Updated notes for baby {baby_id} (length: {len(notes)})")
+    logger.info(f"Deleted note {note_id} for baby {baby_id}")
     
-    return UpdateNotesResponse(
+    return DeleteResponse(
         success=True,
-        notes=notes
+        message="Note deleted successfully"
     )

@@ -69,9 +69,9 @@ class ChatService:
         Returns:
             Dictionary containing all baby context data
         """
-        # Baby info + notes (truncated)
+        # Baby info + notes (formatted from multi-note system)
         baby = await self.baby_manager.get_baby_by_id(baby_id)
-        notes = await self.baby_manager.get_baby_notes(baby_id)
+        notes = await self.baby_manager.get_baby_notes_formatted(baby_id)
         
         # Optimal stats (learned ideal conditions)
         optimal = await self.baby_manager.get_optimal_stats(baby_id)
@@ -105,7 +105,7 @@ class ChatService:
         
         return {
             "baby": baby,
-            "notes": notes[:MAX_NOTES_CHARS] if notes else None,
+            "notes": notes[:MAX_NOTES_CHARS] if notes else None,  # Truncate combined notes if too long
             "optimal_stats": optimal or {},
             "recent_awakenings": awakenings,
             "correlations": correlations,
@@ -372,23 +372,52 @@ RESPONSE GUIDELINES:
             from google.genai import types
             
             loop = asyncio.get_event_loop()
+            # Use configurable model (default: gemini-2.0-flash for better quality)
+            model_name = settings.GEMINI_MODEL_CHAT
             response = await loop.run_in_executor(
                 None,
                 lambda: client.models.generate_content(
-                    model="models/gemini-2.5-flash",
+                    model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.7,  # Slightly more creative for chat
-                        max_output_tokens=500,
+                        max_output_tokens=4096,  # Increased significantly to prevent truncation
                         top_p=0.9,
                     ),
                 )
             )
             
-            if response and response.text:
-                return response.text.strip()
-            else:
-                return "I'm sorry, I couldn't generate a response. Please try again."
+            if response:
+                # Log response details for debugging
+                logger.debug(f"Gemini response object: {response}")
+                
+                # Check for blocked responses (safety filters)
+                if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                    logger.warning(f"Prompt feedback: {response.prompt_feedback}")
+                
+                # Try to get text from response
+                if response.text:
+                    text = response.text.strip()
+                    # Check for potentially incomplete response
+                    if text and text[-1] not in '.!?:)"\'':
+                        logger.warning(f"Potentially incomplete chat response - may have been truncated")
+                    return text
+                
+                # Try candidates if text is empty
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            text = candidate.content.parts[0].text.strip()
+                            if text:
+                                return text
+                    # Check for finish reason
+                    if hasattr(candidate, 'finish_reason'):
+                        logger.warning(f"Response finish reason: {candidate.finish_reason}")
+                
+                logger.warning(f"Empty or blocked response from Gemini")
+            
+            return "I'm sorry, I couldn't generate a response. Please try again."
                 
         except Exception as e:
             logger.error(f"Gemini API error in chat: {e}")

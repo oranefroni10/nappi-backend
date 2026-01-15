@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from app.core.database import get_database
-from app.db.models import Babies, SleepRealtimeData, AwakeningEvents, Correlations, DailySummary, OptimalStats
+from app.db.models import Babies, SleepRealtimeData, AwakeningEvents, Correlations, DailySummary, OptimalStats, BabyNote
 from datetime import date as date_type
 from sqlalchemy import text
 
@@ -800,61 +800,168 @@ class BabyDataManager:
             return None
 
     # ============================================
-    # Baby Notes Methods
+    # Baby Notes Methods (Multi-Note System)
     # ============================================
 
-    async def get_baby_notes(self, baby_id: int) -> Optional[str]:
+    async def get_baby_notes(self, baby_id: int) -> List[BabyNote]:
         """
-        Get notes for a baby.
+        Get all notes for a baby from the baby_notes table.
         
         Args:
             baby_id: The ID of the baby
             
         Returns:
-            Notes string or None if no notes
+            List of BabyNote objects
         """
         try:
             async with self.database.session() as session:
                 result = await session.execute(
-                    text('SELECT notes FROM "Nappi"."babies" WHERE id = :baby_id'),
+                    text('''
+                        SELECT id, baby_id, title, content, created_at, updated_at
+                        FROM "Nappi"."baby_notes"
+                        WHERE baby_id = :baby_id
+                        ORDER BY created_at DESC
+                    '''),
                     {"baby_id": baby_id}
                 )
-                row = result.first()
-                return row[0] if row else None
+                rows = result.mappings().all()
+                return [BabyNote(**row) for row in rows]
         except Exception as e:
             logger.error(f"Failed to get notes for baby {baby_id}: {e}")
-            return None
+            return []
 
-    async def update_baby_notes(self, baby_id: int, notes: str) -> bool:
+    async def create_baby_note(
+        self, 
+        baby_id: int, 
+        title: str, 
+        content: str
+    ) -> Optional[BabyNote]:
         """
-        Update notes for a baby.
+        Create a new note for a baby.
         
         Args:
             baby_id: The ID of the baby
-            notes: The notes text (will be truncated to 2000 chars)
+            title: Note title (max 200 chars)
+            content: Note content
             
         Returns:
-            True if successful, False otherwise
+            Created BabyNote object or None if failed
         """
         try:
-            # Truncate notes to 2000 chars
-            truncated_notes = notes[:2000] if notes else ""
+            # Truncate title to 200 chars
+            truncated_title = title[:200] if title else "Untitled"
             
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        UPDATE "Nappi"."babies" 
-                        SET notes = :notes 
-                        WHERE id = :baby_id
-                        RETURNING id
+                        INSERT INTO "Nappi"."baby_notes" (baby_id, title, content, created_at, updated_at)
+                        VALUES (:baby_id, :title, :content, NOW(), NOW())
+                        RETURNING id, baby_id, title, content, created_at, updated_at
                     '''),
-                    {"baby_id": baby_id, "notes": truncated_notes}
+                    {"baby_id": baby_id, "title": truncated_title, "content": content}
                 )
                 await session.commit()
-                return result.first() is not None
+                row = result.mappings().first()
+                if row:
+                    logger.info(f"Created note '{truncated_title}' for baby {baby_id}")
+                    return BabyNote(**row)
+                return None
         except Exception as e:
-            logger.error(f"Failed to update notes for baby {baby_id}: {e}")
+            logger.error(f"Failed to create note for baby {baby_id}: {e}")
+            return None
+
+    async def update_baby_note(
+        self,
+        note_id: int,
+        baby_id: int,
+        title: str,
+        content: str
+    ) -> Optional[BabyNote]:
+        """
+        Update an existing note.
+        
+        Args:
+            note_id: The ID of the note to update
+            baby_id: The ID of the baby (for validation)
+            title: Updated title
+            content: Updated content
+            
+        Returns:
+            Updated BabyNote object or None if failed
+        """
+        try:
+            # Truncate title to 200 chars
+            truncated_title = title[:200] if title else "Untitled"
+            
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        UPDATE "Nappi"."baby_notes"
+                        SET title = :title, content = :content, updated_at = NOW()
+                        WHERE id = :note_id AND baby_id = :baby_id
+                        RETURNING id, baby_id, title, content, created_at, updated_at
+                    '''),
+                    {"note_id": note_id, "baby_id": baby_id, "title": truncated_title, "content": content}
+                )
+                await session.commit()
+                row = result.mappings().first()
+                if row:
+                    logger.info(f"Updated note {note_id} for baby {baby_id}")
+                    return BabyNote(**row)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to update note {note_id} for baby {baby_id}: {e}")
+            return None
+
+    async def delete_baby_note(self, note_id: int, baby_id: int) -> bool:
+        """
+        Delete a note.
+        
+        Args:
+            note_id: The ID of the note to delete
+            baby_id: The ID of the baby (for validation)
+            
+        Returns:
+            True if deleted, False otherwise
+        """
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        DELETE FROM "Nappi"."baby_notes"
+                        WHERE id = :note_id AND baby_id = :baby_id
+                        RETURNING id
+                    '''),
+                    {"note_id": note_id, "baby_id": baby_id}
+                )
+                await session.commit()
+                deleted = result.first() is not None
+                if deleted:
+                    logger.info(f"Deleted note {note_id} for baby {baby_id}")
+                return deleted
+        except Exception as e:
+            logger.error(f"Failed to delete note {note_id} for baby {baby_id}: {e}")
             return False
+
+    async def get_baby_notes_formatted(self, baby_id: int) -> str:
+        """
+        Get all notes for a baby formatted as a string for AI context.
+        
+        Args:
+            baby_id: The ID of the baby
+            
+        Returns:
+            Formatted string of all notes or empty string if none
+        """
+        notes = await self.get_baby_notes(baby_id)
+        if not notes:
+            return ""
+        
+        formatted = []
+        for note in notes:
+            formatted.append(f"- [{note.title}]: {note.content}")
+        
+        return "\n".join(formatted)
 
     async def validate_baby_ownership(self, user_id: int, baby_id: int) -> bool:
         """
