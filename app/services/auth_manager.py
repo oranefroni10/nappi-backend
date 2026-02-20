@@ -83,7 +83,7 @@ class AuthManager:
             user = User(**user_row)
             baby = Babies(**baby_row) if baby_row else None
             
-            logger.info(f"✅ User registered: {first_name} {last_name}, baby_found={baby is not None}")
+            logger.info(f"User registered: {first_name} {last_name}, baby_found={baby is not None}")
             return user, baby, baby is not None
 
     async def register_baby(
@@ -143,7 +143,7 @@ class AuthManager:
             )
             baby = Babies(**baby_row)
             
-            logger.info(f"✅ Baby registered: {first_name} {user_row['last_name']} → user_id={user_id}")
+            logger.info(f"Baby registered: {first_name} {user_row['last_name']} → user_id={user_id}")
             return user, baby
 
     async def signin(
@@ -194,7 +194,7 @@ class AuthManager:
                     created_at=row["created_at"]
                 )
             
-            logger.info(f"✅ User signed in: {username}")
+            logger.info(f"User signed in: {username}")
             return user, baby
 
     async def change_password(
@@ -221,7 +221,7 @@ class AuthManager:
             await session.commit()
             updated_user = result.fetchone()
             if updated_user:
-                logger.info(f"✅ Password updated for user")
+                logger.info(f"Password updated for user")
                 return True
             logger.warning(f"Failed password update attempt for user_id: {user_id}")
             return False

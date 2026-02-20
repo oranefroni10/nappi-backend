@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
-from .models import LastSleepSummary, SleepStageMetric, RoomMetrics
+from .models import LastSleepSummary, RoomMetrics
 from ..core.database import get_database
 from ..services.babies_data import BabyDataManager
 
@@ -30,7 +30,6 @@ async def get_last_sleep_summary(
     - Sleep start/end times
     - Duration
     - Quality score (if available)
-    - Sleep stages (simplified)
     """
     database = get_database()
     baby_manager = BabyDataManager()
@@ -66,8 +65,7 @@ async def get_last_sleep_summary(
                     ended_at=now,
                     total_sleep_minutes=0,
                     awakenings_count=0,
-                    sleep_quality_score=0,
-                    stages=[]
+                    sleep_quality_score=0
                 )
             
             metadata = row["event_metadata"] or {}
@@ -114,48 +112,29 @@ async def get_last_sleep_summary(
             )
             awakenings_count = awakenings_result.scalar() or 0
             
-            # Generate simplified sleep stages
-            total_duration = (ended_at - started_at).total_seconds()
-            stages = []
-            
-            if total_duration > 0:
-                # Simplified stage breakdown: 20% light, 50% deep, 30% REM
-                light_end = started_at + timedelta(seconds=total_duration * 0.2)
-                deep_end = started_at + timedelta(seconds=total_duration * 0.7)
-                
-                stages = [
-                    SleepStageMetric(
-                        stage="light",
-                        start_time=started_at,
-                        end_time=light_end
-                    ),
-                    SleepStageMetric(
-                        stage="deep",
-                        start_time=light_end,
-                        end_time=deep_end
-                    ),
-                    SleepStageMetric(
-                        stage="rem",
-                        start_time=deep_end,
-                        end_time=ended_at
-                    )
-                ]
-            
-            # Get sleep quality score from sensor data average (simplified)
-            quality_result = await session.execute(
+            # Get sleep quality score and room averages from sensor data during the nap
+            sensor_result = await session.execute(
                 text('''
-                    SELECT AVG(sleep_quality_score) as avg_score
+                    SELECT
+                        AVG(sleep_quality_score) as avg_score,
+                        AVG(temp_celcius) as avg_temp,
+                        AVG(humidity) as avg_humidity,
+                        MAX(noise_decibel) as max_noise
                     FROM "Nappi"."sleep_realtime_data"
                     WHERE baby_id = :baby_id
                       AND datetime >= :started_at
                       AND datetime <= :ended_at
-                      AND sleep_quality_score IS NOT NULL
                 '''),
                 {"baby_id": baby_id, "started_at": started_at, "ended_at": ended_at}
             )
-            avg_quality = quality_result.scalar()
-            sleep_quality_score = int(avg_quality) if avg_quality else 75  # Default score
-            
+            sensor_row = sensor_result.mappings().first()
+            avg_quality = sensor_row["avg_score"] if sensor_row else None
+            sleep_quality_score = int(avg_quality) if avg_quality else 75
+
+            avg_temperature = float(sensor_row["avg_temp"]) if sensor_row and sensor_row["avg_temp"] is not None else None
+            avg_humidity = float(sensor_row["avg_humidity"]) if sensor_row and sensor_row["avg_humidity"] is not None else None
+            max_noise = float(sensor_row["max_noise"]) if sensor_row and sensor_row["max_noise"] is not None else None
+
             return LastSleepSummary(
                 baby_name=baby.first_name,
                 started_at=started_at,
@@ -163,7 +142,9 @@ async def get_last_sleep_summary(
                 total_sleep_minutes=int(duration_minutes),
                 awakenings_count=awakenings_count,
                 sleep_quality_score=sleep_quality_score,
-                stages=stages
+                avg_temperature=avg_temperature,
+                avg_humidity=avg_humidity,
+                max_noise=max_noise
             )
             
     except Exception as e:
@@ -194,23 +175,13 @@ async def get_current_room_metrics(
         last_readings = await baby_manager.get_last_sensor_readings(baby_id)
         
         if not last_readings:
-            # No sensor data - return default values
-            return RoomMetrics(
-                temperature_c=22.0,
-                humidity_percent=50.0,
-                noise_db=30.0,
-                light_lux=0.0,
-                measured_at=datetime.utcnow(),
-                notes="No sensor data available yet"
-            )
-        
+            return RoomMetrics()
+
         return RoomMetrics(
-            temperature_c=last_readings.get("temp_celcius") or 22.0,
-            humidity_percent=last_readings.get("humidity") or 50.0,
-            noise_db=last_readings.get("noise_decibel") or 30.0,
-            light_lux=0.0,  # Light sensor not implemented
-            measured_at=last_readings.get("datetime") or datetime.utcnow(),
-            notes=None
+            temperature_c=last_readings.get("temp_celcius"),
+            humidity_percent=last_readings.get("humidity"),
+            noise_db=last_readings.get("noise_decibel"),
+            measured_at=last_readings.get("datetime"),
         )
         
     except Exception as e:

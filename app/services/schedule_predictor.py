@@ -20,26 +20,27 @@ from .sleep_patterns import analyze_sleep_patterns
 logger = logging.getLogger(__name__)
 
 # Age-based wake window recommendations (in hours)
-# Source: Pediatric sleep guidelines
+# See README.md "Sleep Guidelines Sources" section for full source citations
 WAKE_WINDOWS = {
     # (min_months, max_months): (min_wake_hours, max_wake_hours)
-    (0, 1): (0.75, 1.0),      # 45-60 min
-    (2, 3): (1.0, 1.5),       # 1-1.5 hours
-    (4, 5): (1.5, 2.5),       # 1.5-2.5 hours
-    (6, 7): (2.0, 3.0),       # 2-3 hours
-    (8, 9): (2.5, 3.5),       # 2.5-3.5 hours
+    (0, 1): (0.5, 1.0),       # 30-60 min
+    (2, 3): (1.0, 2.0),       # 1-2 hours
+    (4, 5): (1.25, 2.5),      # 1.25-2.5 hours
+    (6, 7): (2.0, 4.0),       # 2-4 hours
+    (8, 9): (2.5, 4.5),       # 2.5-4.5 hours
     (10, 12): (3.0, 4.0),     # 3-4 hours
-    (13, 18): (4.0, 5.5),     # 4-5.5 hours
-    (19, 24): (5.0, 6.0),     # 5-6 hours
-    (25, 36): (5.5, 6.5),     # 5.5-6.5 hours (if still napping)
+    (13, 18): (3.0, 5.5),     # 3-5.5 hours
+    (19, 24): (4.0, 6.0),     # 4-6 hours
+    (25, 36): (5.0, 6.0),     # 5-6 hours
 }
 
 # Typical bedtimes by age
+# See README.md "Sleep Guidelines Sources" section for full source citations
 TYPICAL_BEDTIMES = {
-    (0, 3): (19, 0, 22, 0),   # 7:00 PM - 10:00 PM (newborns are variable)
-    (4, 6): (18, 30, 20, 0),  # 6:30 PM - 8:00 PM
-    (7, 12): (18, 0, 19, 30), # 6:00 PM - 7:30 PM
-    (13, 24): (18, 30, 20, 0), # 6:30 PM - 8:00 PM
+    (0, 3): (20, 0, 23, 0),   # 8:00 PM - 11:00 PM (newborns: no circadian rhythm yet)
+    (4, 6): (19, 0, 20, 30),  # 7:00 PM - 8:30 PM (circadian rhythm maturing)
+    (7, 12): (18, 30, 20, 0), # 6:30 PM - 8:00 PM (earliest bedtimes of infancy)
+    (13, 24): (19, 0, 20, 0), # 7:00 PM - 8:00 PM
     (25, 36): (19, 0, 20, 30), # 7:00 PM - 8:30 PM
 }
 

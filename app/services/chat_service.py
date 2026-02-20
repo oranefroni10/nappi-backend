@@ -20,6 +20,7 @@ from typing import Dict, List, Any, Optional
 from .babies_data import BabyDataManager
 from .sleep_patterns import analyze_sleep_patterns
 from ..core.settings import settings
+from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -228,27 +229,39 @@ class ChatService:
             if avg_temp:
                 stats_text = f"Last {len(summaries)} days: avg temp {avg_temp:.1f}°C, {total_awakenings} total awakenings"
         
-        # Format recent awakenings
+        # Format recent awakenings (grouped into sleep blocks)
         awakenings_text = ""
         if context.get("recent_awakenings"):
-            awakening_lines = []
-            for a in context["recent_awakenings"][:3]:
-                awakened_at = a.get("awakened_at")
-                duration = a.get("sleep_duration_minutes", 0)
-                insight = a.get("ai_insight", "")
-                
-                if awakened_at:
-                    time_str = awakened_at.strftime("%m/%d %H:%M") if isinstance(awakened_at, datetime) else str(awakened_at)[:16]
-                    hours = int(duration // 60)
-                    mins = int(duration % 60)
-                    duration_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
-                    line = f"- {time_str}: slept {duration_str}"
-                    if insight:
-                        line += f" - {insight[:100]}..."
-                    awakening_lines.append(line)
-            
-            if awakening_lines:
-                awakenings_text = "Recent awakenings:\n" + "\n".join(awakening_lines)
+            blocks = group_into_sleep_blocks(
+                context["recent_awakenings"],
+                source="awakenings_with_insights"
+            )
+
+            block_lines = []
+            for block in blocks[-3:]:
+                start_str = block.block_start.strftime("%m/%d %H:%M")
+                end_str = block.block_end.strftime("%H:%M")
+                total_hours = int(block.total_sleep_minutes // 60)
+                total_mins = int(block.total_sleep_minutes % 60)
+                duration_str = f"{total_hours}h {total_mins}m" if total_hours > 0 else f"{total_mins}m"
+
+                if block.interruption_count > 0:
+                    line = (
+                        f"- Sleep block {start_str}-{end_str}: "
+                        f"{duration_str} total sleep, "
+                        f"{block.interruption_count} interruption(s)"
+                    )
+                else:
+                    line = f"- {start_str}-{end_str}: slept {duration_str}"
+
+                # Include first event's AI insight if available
+                if block.events and block.events[0].get("ai_insight"):
+                    line += f" - {block.events[0]['ai_insight'][:80]}..."
+
+                block_lines.append(line)
+
+            if block_lines:
+                awakenings_text = "Recent sleep blocks:\n" + "\n".join(block_lines)
         
         # Build optimal conditions text
         optimal = context.get("optimal_stats", {})
@@ -297,47 +310,68 @@ Provide a helpful, personalized response based on {baby.first_name}'s specific d
 === AGE-SPECIFIC SLEEP GUIDELINES (use these for {age_str}) ===
 
 NEWBORNS (0-3 months):
-- Total sleep: 14-17 hours/day in short periods
-- Wake windows: 45-90 minutes max
-- Naps: 4-6 naps, no set schedule yet
-- Night sleep: 8-10 hours with frequent waking for feeds
+- Total sleep: 14-17 hours/day in short 1-2 hour segments
+- Wake windows: 0-1 month: 30-60 min; 1-3 months: 1-2 hours
+- Naps: No fixed pattern; sleep distributed across day and night. By ~3 months: 4-5 naps/day
+- Night sleep: No consolidated night sleep in early weeks (1-2 hour segments). By 3 months some babies start sleeping 5-8 hour stretches
+- Expected night wakings: 1-2 per night is normal (Sadeh et al. 2009, n=5006)
 - Key focus: Safe sleep (back to sleep, firm surface, bare crib), room sharing, feeding on demand
-- Sleep training: NOT appropriate yet - focus on establishing routines
-- Ideal room temp: 68-72°F (20-22°C)
+- Sleep training: NOT appropriate yet - newborns cannot self-soothe
+- Ideal room temp: 68-72°F (20-22°C) - temperatures above 24°C can impair baby's ability to arouse from REM sleep, which is a SIDS risk factor (Franco et al. 2001)
+- Noise: White noise can help, but keep under 50 dBA and place the machine 200+ cm from the crib to protect hearing (Hugh et al. 2014, AAP)
+- Typical bedtime: 9-11 PM (circadian rhythm not yet established; shifts earlier around 6-8 weeks)
+- Sleep and development: Active (REM) sleep promotes brain development and synaptic formation — sleep is productive time, not just rest
 
 INFANTS 3-6 MONTHS:
-- Total sleep: 14-16 hours/day
-- Wake windows: 1.5-2.5 hours
-- Naps: 3-4 naps/day (4-6 hours total daytime sleep)
-- Night sleep: 10-12 hours (may still wake 1-2x for feeds)
+- Total sleep: 12-16 hours/day including naps
+- Wake windows: 3-4 months: 1.25-2.5 hours; 5-6 months: 2-4 hours
+- Naps: 3-5 naps/day, 3-5 hours total daytime sleep; each nap 30 min to 2 hours. Naps of 30+ min support memory consolidation and learning (Tham et al. 2017)
+- Night sleep: 10-12 hours with 0-2 wakings. By 4-6 months many can sleep 7-8 hours without feeding
+- Expected night wakings: ~1 per night is normal (Sadeh et al. 2009)
 - Key focus: Establishing consistent bedtime routine, self-soothing introduction
-- Sleep training: Can begin gentle methods around 4 months
-- Watch for: 4-month sleep regression (normal developmental change)
+- Sleep training: Can begin at 4-6 months. Behavioral interventions are effective in 94% of cases (AASM review, Mindell et al. 2006)
+- Watch for: 4-month sleep regression - permanent sleep cycle reorganization to adult-like ~45 min cycles
+- Ideal room temp: Keep below 24°C — overheating impairs arousal from REM sleep (Franco et al. 2001)
+- Noise: White noise under 50 dBA, machine placed 200+ cm from crib (Hugh et al. 2014)
+- Typical bedtime: 7:00-8:30 PM
 
 INFANTS 6-9 MONTHS:
-- Total sleep: 12-15 hours/day
-- Wake windows: 2-3 hours
-- Naps: 2-3 naps/day (3-4 hours total daytime sleep)
-- Night sleep: 10-12 hours (many can sleep through)
-- Key focus: Consistent schedule, dropping third nap around 8-9 months
-- Sleep training: Most effective window
-- Watch for: Separation anxiety affecting sleep, teething disruptions
+- Total sleep: 12-16 hours/day including naps
+- Wake windows: 6-7 months: 2-4 hours; 7-9 months: 2.5-4.5 hours
+- Naps: 2-3 naps/day (third nap drops around 8-9 months), 2.5-4 hours total daytime sleep. Naps of 30+ min support memory consolidation (Tham et al. 2017)
+- Night sleep: 10-12 hours; most babies can sleep 8+ hours by this age
+- Expected night wakings: ~1 per night is normal; most 6-9 month olds still wake at least once (Sadeh et al. 2009)
+- Key focus: Consistent schedule, transitioning from 3 to 2 naps
+- Sleep training: Fully appropriate; most effective window is before 8-month separation anxiety peak. Behavioral interventions effective in 94% of cases (Mindell et al. 2006)
+- Ideal room temp: Keep below 24°C — overheating impairs arousal from REM sleep (Franco et al. 2001)
+- Noise: White noise under 50 dBA, machine placed 200+ cm from crib (Hugh et al. 2014)
+- Watch for: 8-month sleep regression (crawling, pulling to stand, separation anxiety peaks), teething disruptions
+- Typical bedtime: 6:30-8:00 PM
 
 INFANTS 9-12 MONTHS:
-- Total sleep: 12-14 hours/day
-- Wake windows: 2.5-3.5 hours
-- Naps: 2 naps/day (2.5-3 hours total daytime sleep)
+- Total sleep: 12-16 hours/day; typically 13-14 hours
+- Wake windows: 9-10 months: 2.75-3.5 hours; 10-12 months: 3-4 hours
+- Naps: 2 naps/day firmly established, 2-3 hours total daytime sleep; each nap 1-2 hours. Consistent naps support memory and motor learning (Tham et al. 2017)
 - Night sleep: 11-12 hours
-- Key focus: Predictable 2-nap schedule, longer wake windows
-- Watch for: Standing in crib, separation anxiety peaks
+- Expected night wakings: 0-1 per night; many sleep through, but ~30% still wake once (Sadeh et al. 2009)
+- Key focus: Predictable 2-nap schedule; do NOT drop to 1 nap yet (most need 2 naps until 14-18 months)
+- Sleep training: Behavioral interventions remain effective at this age (Mindell et al. 2006)
+- Ideal room temp: Keep below 24°C — overheating impairs arousal from REM sleep (Franco et al. 2001)
+- Noise: White noise under 50 dBA, machine placed 200+ cm from crib (Hugh et al. 2014)
+- Watch for: 12-month sleep regression (walking milestone, affects ~55% of toddlers), standing in crib, nap resistance
+- Typical bedtime: 7:00-8:00 PM
 
 TODDLERS 12-24 MONTHS:
-- Total sleep: 11-14 hours/day
-- Wake windows: 4-6 hours
-- Naps: Transition from 2 naps to 1 nap (12-18 months), 2-3 hours
+- Total sleep: 11-14 hours/day including naps
+- Wake windows: 12-14 months: 3-5 hours; 15-24 months: 4-6 hours
+- Naps: 2 naps until 14-18 months, then transition to 1 nap (1.5-3 hours). Most drop to 1 nap by 15-18 months. Daytime naps still support language and cognitive development (Tham et al. 2017; Tarullo et al. 2011)
 - Night sleep: 10-12 hours
-- Key focus: Single nap transition, consistent boundaries, bedtime routine
-- Watch for: 18-month sleep regression, toddler resistance
+- Expected night wakings: 0-1 per night; most toddlers sleep through by this age (Sadeh et al. 2009)
+- Key focus: Single nap transition (expect temporary overtiredness), consistent boundaries, bedtime routine
+- Ideal room temp: Keep below 24°C — overheating impairs arousal from REM sleep (Franco et al. 2001)
+- Noise: White noise under 50 dBA, machine placed 200+ cm from crib (Hugh et al. 2014)
+- Watch for: 18-month sleep regression (language explosion, autonomy, molar teething; lasts 3-6 weeks), toddler resistance and boundary testing
+- Typical bedtime: 7:00-8:00 PM
 
 RESPONSE GUIDELINES:
 1. PRIORITIZE {baby.first_name}'s ACTUAL DATA above general guidelines:
@@ -354,8 +388,9 @@ RESPONSE GUIDELINES:
 
 3. Communication style:
    - Be warm, supportive, and reassuring - parenting is hard!
-   - Always cite specific data points when available (e.g., "Based on Oran's optimal temp of 22°C...")
-   - Provide actionable, personalized recommendations
+   - Always cite specific data points when available (e.g., "Based on {baby.first_name}'s optimal temp of 22°C...")
+   - Frame suggestions gently: "you might want to try...", "it could help to..." — never give orders
+   - Avoid dramatic language like "significant", "critical", "alarming" — keep it calm and friendly
    - Keep responses concise (2-4 sentences) unless more detail is requested
    - If data is missing for a question, acknowledge it and give age-appropriate guidance"""
         

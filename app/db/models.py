@@ -93,7 +93,6 @@ class DailySummary(BaseModel):
     avg_humidity: Optional[float] = None
     avg_temp: Optional[float] = None
     avg_noise: Optional[float] = None
-    anomalies: Optional[dict] = None
     morning_awakes_sum: Optional[int] = None
     noon_awakes_sum: Optional[int] = None
     night_awakes_sum: Optional[int] = None
@@ -116,7 +115,6 @@ class OptimalStats(BaseModel):
     temperature: Optional[float] = None
     humidity : Optional[float] = None
     noise: Optional[float] = None
-    heart_rate: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -156,7 +154,6 @@ class SleepRealtimeData(BaseModel):
     humidity: Optional[float] = None
     temp_celcius: Optional[float] = None
     noise_decibel: Optional[float] = None
-    heart_rate: Optional[float] = None
     sleep_quality_score: Optional[int] = None
 
     class Config:

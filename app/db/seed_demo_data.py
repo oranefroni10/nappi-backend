@@ -39,12 +39,6 @@ NOISE_OPTIMAL = 35.0
 NOISE_MIN, NOISE_MAX = 25.0, 55.0
 
 # Heart rate by age (bpm)
-HEART_RATE_RANGES = {
-    "newborn": (100, 160),    # 0-3 months
-    "infant": (90, 150),      # 4-12 months
-    "toddler": (80, 130),     # 12+ months
-}
-
 
 # =============================================================================
 # Demo Data Definitions
@@ -218,7 +212,6 @@ def generate_sensor_reading(
     base_temp: float = TEMP_OPTIMAL,
     base_humidity: float = HUMIDITY_OPTIMAL,
     base_noise: float = NOISE_OPTIMAL,
-    heart_rate_range: Tuple[int, int] = (90, 140),
     variance: float = 0.3,
     spike_chance: float = 0.05,
 ) -> Dict[str, float]:
@@ -228,8 +221,7 @@ def generate_sensor_reading(
     temp = base_temp + random.gauss(0, variance * 2)
     humidity = base_humidity + random.gauss(0, variance * 5)
     noise = base_noise + random.gauss(0, variance * 3)
-    heart_rate = random.uniform(*heart_rate_range)
-    
+
     # Occasional spikes (these often cause awakenings)
     if random.random() < spike_chance:
         spike_type = random.choice(["temp", "humidity", "noise"])
@@ -249,7 +241,6 @@ def generate_sensor_reading(
         "temp_celcius": round(temp, 1),
         "humidity": round(humidity, 1),
         "noise_decibel": round(noise, 1),
-        "heart_rate": round(heart_rate, 0),
     }
 
 
@@ -478,8 +469,6 @@ async def seed_sleep_data_for_day(
     """
     age_category = baby_data["age_category"]
     schedule = SLEEP_SCHEDULES[age_category]
-    hr_range = HEART_RATE_RANGES[age_category]
-    
     sensor_readings = []
     awakening_events = []
     alerts = []
@@ -531,7 +520,7 @@ async def seed_sleep_data_for_day(
             
             reading = generate_sensor_reading(
                 base_temp, base_humidity, base_noise,
-                hr_range, spike_chance=spike_chance
+                spike_chance=spike_chance
             )
             reading["datetime"] = current_time
             reading["sleep_quality_score"] = generate_sleep_quality_score(
@@ -598,12 +587,11 @@ async def seed_sleep_data_for_day(
                 "temp_celcius": last_reading["temp_celcius"] if last_reading else None,
                 "humidity": last_reading["humidity"] if last_reading else None,
                 "noise_decibel": last_reading["noise_decibel"] if last_reading else None,
-                "heart_rate": last_reading["heart_rate"] if last_reading else None,
             } if last_reading else None,
             "correlation_params": correlation_params,
         }
         awakening_events.append(awakening_event)
-        
+
         # Add awakening alert
         alerts.append({
             "type": "awakening",
@@ -646,7 +634,7 @@ async def seed_sleep_data_for_day(
         
         while current_time < nap_end:
             reading = generate_sensor_reading(
-                base_temp, base_humidity, base_noise, hr_range
+                base_temp, base_humidity, base_noise
             )
             reading["datetime"] = current_time
             reading["sleep_quality_score"] = generate_sleep_quality_score(
@@ -678,12 +666,11 @@ async def seed_sleep_data_for_day(
                 "temp_celcius": last_reading["temp_celcius"] if last_reading else None,
                 "humidity": last_reading["humidity"] if last_reading else None,
                 "noise_decibel": last_reading["noise_decibel"] if last_reading else None,
-                "heart_rate": last_reading["heart_rate"] if last_reading else None,
             } if last_reading else None,
             "correlation_params": correlation_params,
         }
         awakening_events.append(awakening_event)
-    
+
     return sensor_readings, awakening_events, alerts
 
 
@@ -729,19 +716,18 @@ async def seed_sleep_realtime_data(
                 values_list = []
                 params = {"baby_id": baby_id}
                 for idx, reading in enumerate(batch):
-                    values_list.append(f"(:baby_id, :dt{idx}, :hum{idx}, :temp{idx}, :noise{idx}, :hr{idx}, :sq{idx})")
+                    values_list.append(f"(:baby_id, :dt{idx}, :hum{idx}, :temp{idx}, :noise{idx}, :sq{idx})")
                     params[f"dt{idx}"] = reading["datetime"]
                     params[f"hum{idx}"] = reading["humidity"]
                     params[f"temp{idx}"] = reading["temp_celcius"]
                     params[f"noise{idx}"] = reading["noise_decibel"]
-                    params[f"hr{idx}"] = reading["heart_rate"]
                     params[f"sq{idx}"] = reading["sleep_quality_score"]
                 
                 values_sql = ", ".join(values_list)
                 await session.execute(
                     text(f'''
                         INSERT INTO "Nappi"."sleep_realtime_data"
-                        (baby_id, datetime, humidity, temp_celcius, noise_decibel, heart_rate, sleep_quality_score)
+                        (baby_id, datetime, humidity, temp_celcius, noise_decibel, sleep_quality_score)
                         VALUES {values_sql}
                     '''),
                     params
@@ -875,25 +861,13 @@ async def seed_daily_summaries(
                 else:
                     night_awakes += 1
             
-            # Detect anomalies
-            anomalies = {}
-            if avg_temp > 23:
-                anomalies["high_temperature"] = {"avg": round(avg_temp, 1), "threshold": 23}
-            if avg_temp < 19:
-                anomalies["low_temperature"] = {"avg": round(avg_temp, 1), "threshold": 19}
-            if avg_humidity > 60:
-                anomalies["high_humidity"] = {"avg": round(avg_humidity, 1), "threshold": 60}
-            if avg_humidity < 40:
-                anomalies["low_humidity"] = {"avg": round(avg_humidity, 1), "threshold": 40}
-            
             await session.execute(
                 text('''
                     INSERT INTO "Nappi"."daily_summary"
                     (baby_id, summary_date, avg_temp, avg_humidity, avg_noise,
-                     morning_awakes_sum, noon_awakes_sum, night_awakes_sum, anomalies)
+                     morning_awakes_sum, noon_awakes_sum, night_awakes_sum)
                     VALUES (:baby_id, :summary_date, :avg_temp, :avg_humidity, :avg_noise,
-                            :morning_awakes_sum, :noon_awakes_sum, :night_awakes_sum,
-                            CAST(:anomalies AS jsonb))
+                            :morning_awakes_sum, :noon_awakes_sum, :night_awakes_sum)
                 '''),
                 {
                     "baby_id": baby_id,
@@ -904,7 +878,6 @@ async def seed_daily_summaries(
                     "morning_awakes_sum": morning_awakes,
                     "noon_awakes_sum": noon_awakes,
                     "night_awakes_sum": night_awakes,
-                    "anomalies": json.dumps(anomalies) if anomalies else None,
                 }
             )
             summaries_created += 1
@@ -925,8 +898,6 @@ async def seed_optimal_stats(
     for i, baby_id in enumerate(baby_ids):
         baby_data = BABIES_DATA[i]
         sensor_data = all_sensor_data[baby_id]
-        hr_range = HEART_RATE_RANGES[baby_data["age_category"]]
-        
         if not sensor_data:
             continue
         
@@ -937,26 +908,23 @@ async def seed_optimal_stats(
             optimal_temp = sum(r["temp_celcius"] for r in high_quality_readings) / len(high_quality_readings)
             optimal_humidity = sum(r["humidity"] for r in high_quality_readings) / len(high_quality_readings)
             optimal_noise = sum(r["noise_decibel"] for r in high_quality_readings) / len(high_quality_readings)
-            optimal_hr = sum(r["heart_rate"] for r in high_quality_readings) / len(high_quality_readings)
         else:
             # Fallback to ideal values
             optimal_temp = TEMP_OPTIMAL
             optimal_humidity = HUMIDITY_OPTIMAL
             optimal_noise = NOISE_OPTIMAL
-            optimal_hr = sum(hr_range) / 2
-        
+
         await session.execute(
             text('''
                 INSERT INTO "Nappi"."optimal_stats"
-                (baby_id, temperature, humidity, noise, heart_rate)
-                VALUES (:baby_id, :temperature, :humidity, :noise, :heart_rate)
+                (baby_id, temperature, humidity, noise)
+                VALUES (:baby_id, :temperature, :humidity, :noise)
             '''),
             {
                 "baby_id": baby_id,
                 "temperature": round(optimal_temp, 1),
                 "humidity": round(optimal_humidity, 1),
                 "noise": round(optimal_noise, 1),
-                "heart_rate": round(optimal_hr, 0),
             }
         )
         

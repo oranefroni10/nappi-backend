@@ -11,8 +11,8 @@ This service handles:
 import asyncio
 import json
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Any, Set
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Set, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -32,7 +32,6 @@ class AlertType(str, Enum):
 class AlertSeverity(str, Enum):
     INFO = "info"
     WARNING = "warning"
-    CRITICAL = "critical"
 
 
 @dataclass
@@ -56,12 +55,15 @@ class Alert:
         return data
 
 
+# Alert cooldown (prevents repeated alerts for same condition)
+ALERT_COOLDOWN_MINUTES = 5
+
 # Alert thresholds
 TEMP_HIGH = 26.0  # °C
 TEMP_LOW = 18.0   # °C
 HUMIDITY_HIGH = 60.0  # %
 HUMIDITY_LOW = 30.0   # %
-NOISE_HIGH = 55.0  # dB
+NOISE_HIGH = 50.0  # dB (Hugh et al. 2014 — 50 dBA nursery limit)
 
 
 class SSEManager:
@@ -129,6 +131,20 @@ class AlertService:
     def __init__(self):
         self.database = get_database()
         self.sse_manager = get_sse_manager()
+        self._alert_cooldowns: Dict[Tuple[int, str], datetime] = {}  # (baby_id, alert_type) → cooldown_until
+
+    def _is_alert_on_cooldown(self, baby_id: int, alert_type: str) -> bool:
+        """Check if an alert type is on cooldown for a baby."""
+        key = (baby_id, alert_type)
+        cooldown_until = self._alert_cooldowns.get(key)
+        if cooldown_until and datetime.utcnow() < cooldown_until:
+            return True
+        return False
+
+    def _set_alert_cooldown(self, baby_id: int, alert_type: str) -> None:
+        """Set cooldown for an alert type for a baby."""
+        key = (baby_id, alert_type)
+        self._alert_cooldowns[key] = datetime.utcnow() + timedelta(minutes=ALERT_COOLDOWN_MINUTES)
     
     async def get_user_id_for_baby(self, baby_id: int) -> Optional[int]:
         """Get the user_id who owns this baby."""
@@ -337,6 +353,23 @@ class AlertService:
             logger.error(f"Failed to mark all alerts as read for user {user_id}: {e}")
             return 0
     
+    async def delete_alerts(self, alert_ids: List[int], user_id: int) -> int:
+        """Delete alerts by IDs for a user. Returns count of deleted alerts."""
+        try:
+            async with self.database.session() as session:
+                result = await session.execute(
+                    text('''
+                        DELETE FROM "Nappi"."alerts"
+                        WHERE id = ANY(:alert_ids) AND user_id = :user_id
+                    '''),
+                    {"alert_ids": alert_ids, "user_id": user_id}
+                )
+                await session.commit()
+                return result.rowcount
+        except Exception as e:
+            logger.error(f"Failed to delete alerts for user {user_id}: {e}")
+            return 0
+
     async def check_thresholds(
         self,
         baby_id: int,
@@ -367,73 +400,83 @@ class AlertService:
         
         alerts = []
         noise = noise_db  # Rename for internal use
-        
+
         if temperature is not None:
             if temperature > TEMP_HIGH:
-                alert = await self.create_alert(
-                    baby_id=baby_id,
-                    user_id=user_id,
-                    alert_type=AlertType.TEMPERATURE,
-                    title="Room temperature high",
-                    message=f"Temperature reached {temperature:.1f}°C. Consider cooling the room.",
-                    severity=AlertSeverity.WARNING,
-                    metadata={"value": temperature, "threshold": TEMP_HIGH, "direction": "high"}
-                )
-                if alert:
-                    alerts.append(alert)
+                if not self._is_alert_on_cooldown(baby_id, AlertType.TEMPERATURE):
+                    alert = await self.create_alert(
+                        baby_id=baby_id,
+                        user_id=user_id,
+                        alert_type=AlertType.TEMPERATURE,
+                        title="Room temperature update",
+                        message=f"We noticed the temperature is at {temperature:.1f}°C — you might want to cool the room a bit.",
+                        severity=AlertSeverity.WARNING,
+                        metadata={"value": temperature, "threshold": TEMP_HIGH, "direction": "high"}
+                    )
+                    if alert:
+                        self._set_alert_cooldown(baby_id, AlertType.TEMPERATURE)
+                        alerts.append(alert)
             elif temperature < TEMP_LOW:
-                alert = await self.create_alert(
-                    baby_id=baby_id,
-                    user_id=user_id,
-                    alert_type=AlertType.TEMPERATURE,
-                    title="Room temperature low",
-                    message=f"Temperature dropped to {temperature:.1f}°C. Consider warming the room.",
-                    severity=AlertSeverity.WARNING,
-                    metadata={"value": temperature, "threshold": TEMP_LOW, "direction": "low"}
-                )
-                if alert:
-                    alerts.append(alert)
-        
+                if not self._is_alert_on_cooldown(baby_id, AlertType.TEMPERATURE):
+                    alert = await self.create_alert(
+                        baby_id=baby_id,
+                        user_id=user_id,
+                        alert_type=AlertType.TEMPERATURE,
+                        title="Room temperature update",
+                        message=f"We noticed the temperature is at {temperature:.1f}°C — it might help to warm the room a little.",
+                        severity=AlertSeverity.WARNING,
+                        metadata={"value": temperature, "threshold": TEMP_LOW, "direction": "low"}
+                    )
+                    if alert:
+                        self._set_alert_cooldown(baby_id, AlertType.TEMPERATURE)
+                        alerts.append(alert)
+
         if humidity is not None:
             if humidity > HUMIDITY_HIGH:
-                alert = await self.create_alert(
-                    baby_id=baby_id,
-                    user_id=user_id,
-                    alert_type=AlertType.HUMIDITY,
-                    title="Room humidity high",
-                    message=f"Humidity reached {humidity:.0f}%. Consider using a dehumidifier.",
-                    severity=AlertSeverity.WARNING,
-                    metadata={"value": humidity, "threshold": HUMIDITY_HIGH, "direction": "high"}
-                )
-                if alert:
-                    alerts.append(alert)
+                if not self._is_alert_on_cooldown(baby_id, AlertType.HUMIDITY):
+                    alert = await self.create_alert(
+                        baby_id=baby_id,
+                        user_id=user_id,
+                        alert_type=AlertType.HUMIDITY,
+                        title="Room humidity update",
+                        message=f"Humidity is at {humidity:.0f}% — a dehumidifier might help keep things comfortable.",
+                        severity=AlertSeverity.WARNING,
+                        metadata={"value": humidity, "threshold": HUMIDITY_HIGH, "direction": "high"}
+                    )
+                    if alert:
+                        self._set_alert_cooldown(baby_id, AlertType.HUMIDITY)
+                        alerts.append(alert)
             elif humidity < HUMIDITY_LOW:
-                alert = await self.create_alert(
-                    baby_id=baby_id,
-                    user_id=user_id,
-                    alert_type=AlertType.HUMIDITY,
-                    title="Room humidity low",
-                    message=f"Humidity dropped to {humidity:.0f}%. Consider using a humidifier.",
-                    severity=AlertSeverity.WARNING,
-                    metadata={"value": humidity, "threshold": HUMIDITY_LOW, "direction": "low"}
-                )
-                if alert:
-                    alerts.append(alert)
-        
+                if not self._is_alert_on_cooldown(baby_id, AlertType.HUMIDITY):
+                    alert = await self.create_alert(
+                        baby_id=baby_id,
+                        user_id=user_id,
+                        alert_type=AlertType.HUMIDITY,
+                        title="Room humidity update",
+                        message=f"Humidity is at {humidity:.0f}% — a humidifier could help keep the air comfortable.",
+                        severity=AlertSeverity.WARNING,
+                        metadata={"value": humidity, "threshold": HUMIDITY_LOW, "direction": "low"}
+                    )
+                    if alert:
+                        self._set_alert_cooldown(baby_id, AlertType.HUMIDITY)
+                        alerts.append(alert)
+
         if noise is not None:
             if noise > NOISE_HIGH:
-                alert = await self.create_alert(
-                    baby_id=baby_id,
-                    user_id=user_id,
-                    alert_type=AlertType.NOISE,
-                    title="Noise level alert",
-                    message=f"Detected loud noise ({noise:.0f}dB). This may affect sleep quality.",
-                    severity=AlertSeverity.WARNING,
-                    metadata={"value": noise, "threshold": NOISE_HIGH}
-                )
-                if alert:
-                    alerts.append(alert)
-        
+                if not self._is_alert_on_cooldown(baby_id, AlertType.NOISE):
+                    alert = await self.create_alert(
+                        baby_id=baby_id,
+                        user_id=user_id,
+                        alert_type=AlertType.NOISE,
+                        title="Noise level update",
+                        message=f"We picked up some noise in the room ({noise:.0f}dB) — it could be worth checking on.",
+                        severity=AlertSeverity.WARNING,
+                        metadata={"value": noise, "threshold": NOISE_HIGH}
+                    )
+                    if alert:
+                        self._set_alert_cooldown(baby_id, AlertType.NOISE)
+                        alerts.append(alert)
+
         return alerts
     
     async def create_awakening_alert(

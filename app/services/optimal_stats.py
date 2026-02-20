@@ -24,7 +24,6 @@ class OptimalStatsResult:
     temperature: Optional[float]
     humidity: Optional[float]
     noise: Optional[float]
-    heart_rate: Optional[float]
     days_analyzed: int
     success: bool
     error: Optional[str] = None
@@ -125,7 +124,7 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
                 temperature=None,
                 humidity=None,
                 noise=None,
-                heart_rate=None,
+
                 days_analyzed=0,
                 success=False,
                 error="No historical data available"
@@ -155,10 +154,6 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
         optimal_humidity = calculate_weighted_average(humidities, weights)
         optimal_noise = calculate_weighted_average(noises, weights)
         
-        # Note: heart_rate is not in daily_summary, so we set it to None
-        # It could be calculated from SleepRealtimeData if needed
-        optimal_heart_rate = None
-        
         logger.info(
             f"Calculated optimal stats for baby {baby_id}: "
             f"temp={optimal_temp}, humidity={optimal_humidity}, noise={optimal_noise}"
@@ -169,8 +164,7 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
             baby_id=baby_id,
             temperature=optimal_temp,
             humidity=optimal_humidity,
-            noise=optimal_noise,
-            heart_rate=optimal_heart_rate
+            noise=optimal_noise
         )
         
         if stats_id is None:
@@ -180,7 +174,7 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
                 temperature=optimal_temp,
                 humidity=optimal_humidity,
                 noise=optimal_noise,
-                heart_rate=optimal_heart_rate,
+
                 days_analyzed=len(summaries),
                 success=False,
                 error="Failed to save optimal stats"
@@ -192,7 +186,6 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
             temperature=optimal_temp,
             humidity=optimal_humidity,
             noise=optimal_noise,
-            heart_rate=optimal_heart_rate,
             days_analyzed=len(summaries),
             success=True
         )
@@ -205,7 +198,6 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
             temperature=None,
             humidity=None,
             noise=None,
-            heart_rate=None,
             days_analyzed=0,
             success=False,
             error=str(e)

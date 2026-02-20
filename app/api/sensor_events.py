@@ -152,7 +152,6 @@ async def sleep_end(request: SleepEventRequest):
             temp_celcius=last_readings.get("temp_celcius"),
             humidity=last_readings.get("humidity"),
             noise_decibel=last_readings.get("noise_decibel"),
-            heart_rate=last_readings.get("heart_rate"),
             recorded_at=last_readings.get("datetime"),
         )
     
@@ -165,7 +164,6 @@ async def sleep_end(request: SleepEventRequest):
             "temp_celcius": last_readings.get("temp_celcius") if last_readings else None,
             "humidity": last_readings.get("humidity") if last_readings else None,
             "noise_decibel": last_readings.get("noise_decibel") if last_readings else None,
-            "heart_rate": last_readings.get("heart_rate") if last_readings else None,
         } if last_readings else None
     }
     

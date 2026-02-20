@@ -118,7 +118,7 @@ async def generate_pydantic_models():
         with open(output_path, 'w') as f:
             f.write('\n'.join(output))
         
-        print(f"✅ Successfully generated {len(tables)} models in {output_path}")
+        print(f"Successfully generated {len(tables)} models in {output_path}")
         print(f"\nGenerated models:")
         for table in tables:
             class_name = ''.join(word.capitalize() for word in table['table_name'].split('_'))

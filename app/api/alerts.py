@@ -7,6 +7,7 @@ Provides:
 - POST /alerts/{id}/read - Mark a single alert as read
 - POST /alerts/read-all - Mark all alerts as read
 - GET /alerts/unread-count - Get count of unread alerts
+- DELETE /alerts - Delete alerts by IDs
 - POST /push/subscribe - Subscribe to push notifications
 - POST /push/unsubscribe - Unsubscribe from push notifications
 - GET /push/vapid-key - Get VAPID public key for subscription
@@ -65,6 +66,16 @@ class MarkReadResponse(BaseModel):
 class MarkAllReadResponse(BaseModel):
     """Mark all as read response."""
     updated_count: int
+
+
+class DeleteAlertsRequest(BaseModel):
+    """Delete alerts request."""
+    alert_ids: List[int]
+
+
+class DeleteAlertsResponse(BaseModel):
+    """Delete alerts response."""
+    deleted_count: int
 
 
 class PushSubscriptionRequest(BaseModel):
@@ -225,6 +236,30 @@ async def mark_all_alerts_read(
     alert_service = get_alert_service()
     updated_count = await alert_service.mark_all_as_read(user_id)
     return MarkAllReadResponse(updated_count=updated_count)
+
+
+@router.delete("", response_model=DeleteAlertsResponse)
+async def delete_alerts(
+    request: DeleteAlertsRequest,
+    user_id: int = Query(..., description="User ID")
+):
+    """
+    Delete alerts by IDs for a user.
+    """
+    if not request.alert_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="alert_ids must not be empty"
+        )
+    if len(request.alert_ids) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete more than 100 alerts at once"
+        )
+
+    alert_service = get_alert_service()
+    deleted_count = await alert_service.delete_alerts(request.alert_ids, user_id)
+    return DeleteAlertsResponse(deleted_count=deleted_count)
 
 
 # ============================================

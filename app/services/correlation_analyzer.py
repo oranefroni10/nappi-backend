@@ -17,18 +17,18 @@ from dataclasses import dataclass
 
 from .babies_data import BabyDataManager
 from ..core.settings import settings
+from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
 # Sensor parameters to analyze
-SENSOR_PARAMS = ["temp_celcius", "humidity", "noise_decibel", "heart_rate"]
+SENSOR_PARAMS = ["temp_celcius", "humidity", "noise_decibel"]
 
 # Healthy ranges for baby sleep environment
 HEALTHY_RANGES = {
     "temp_celcius": {"min": 18.0, "max": 22.0, "unit": "°C", "name": "Room temperature"},
     "humidity": {"min": 40.0, "max": 60.0, "unit": "%", "name": "Humidity"},
     "noise_decibel": {"min": 0.0, "max": 50.0, "unit": "dB", "name": "Noise level"},
-    "heart_rate": {"min": 80.0, "max": 160.0, "unit": "bpm", "name": "Heart rate"},
 }
 
 # Lazy-loaded Gemini client
@@ -55,10 +55,16 @@ SYSTEM_INSTRUCTION = """You are a warm, knowledgeable pediatric sleep consultant
 
 Your role:
 - Analyze sensor data and environmental factors that may affect baby sleep
-- Provide evidence-based, practical advice
-- Be reassuring and supportive, never alarming
+- Provide evidence-based, practical suggestions (not orders)
+- Be reassuring and supportive, never alarming or dramatic
 - Keep responses concise (3-4 sentences max)
-- Prioritize actionable tips parents can implement tonight
+- Prioritize gentle, actionable tips parents can try tonight
+
+Tone guidelines:
+- Use soft language like "we noticed", "you might want to", "it could help to", "it looks like"
+- Avoid dramatic words like "significant", "critical", "alarming", "drastic", "severe"
+- Frame suggestions as options, not commands (e.g., "you could try..." instead of "do this")
+- Downplay minor changes — small environmental shifts are normal and don't need dramatic framing
 
 Remember:
 - Baby sleep is highly variable and often unpredictable
@@ -132,7 +138,7 @@ class CorrelationAnalyzer:
 
     def __init__(self):
         self.baby_manager = BabyDataManager()
-        self.change_threshold = settings.CORRELATION_CHANGE_THRESHOLD_PERCENT
+        self.change_thresholds = settings.CORRELATION_CHANGE_THRESHOLDS
         self.time_window_minutes = settings.CORRELATION_TIME_WINDOW_MINUTES
 
     async def _get_baby_context(
@@ -213,7 +219,7 @@ class CorrelationAnalyzer:
         baby_id: int,
         awakened_at: datetime
     ) -> int:
-        """Count awakenings in the last 24 hours."""
+        """Count sleep blocks (not raw events) in the last 24 hours."""
         try:
             start_time = awakened_at - timedelta(hours=24)
             events = await self.baby_manager.get_awakening_events_for_period(
@@ -221,7 +227,12 @@ class CorrelationAnalyzer:
                 start_time=start_time,
                 end_time=awakened_at
             )
-            return len(events)
+            if not events:
+                return 0
+            blocks = group_into_sleep_blocks(
+                events, source="events_for_period"
+            )
+            return len(blocks)
         except Exception as e:
             logger.warning(f"Failed to count recent awakenings: {e}")
             return 0
@@ -387,10 +398,10 @@ class CorrelationAnalyzer:
         self,
         changes: List[ParameterChange]
     ) -> List[ParameterChange]:
-        """Filter to keep only changes above the threshold."""
+        """Filter to keep only changes above the per-parameter threshold."""
         return [
-            change for change in changes 
-            if change.change_percent >= self.change_threshold
+            change for change in changes
+            if change.change_percent >= self.change_thresholds.get(change.param_name, 10.0)
         ]
 
     def _build_parameters_dict(
@@ -521,11 +532,11 @@ Baby Information:
                 max_val = info.get("max", 100)
                 
                 # Check if value is in healthy range
-                status = "✓ normal"
+                status = "normal"
                 if value < min_val:
-                    status = "⚠ below recommended"
+                    status = "below recommended"
                 elif value > max_val:
-                    status = "⚠ above recommended"
+                    status = "above recommended"
                 
                 values_lines.append(f"- {name}: {value}{unit} ({status}, healthy range: {min_val}-{max_val}{unit})")
             
@@ -572,9 +583,9 @@ Baby Information:
                     f"- {name}: {change.direction}d by {change.change_percent:.0f}% "
                     f"(from {change.start_value}{unit} to {change.end_value}{unit})"
                 )
-            changes_text = "\nSignificant Environmental Changes (in the hour before awakening):\n" + "\n".join(changes_lines)
+            changes_text = "\nEnvironmental Changes We Noticed (in the hour before awakening):\n" + "\n".join(changes_lines)
         else:
-            changes_text = "\nSignificant Environmental Changes: None detected (all changes < 10%)"
+            changes_text = "\nEnvironmental Changes: Nothing notable detected (all changes under 10%)"
 
         # Build sleep duration context
         sleep_hours = sleep_duration_minutes / 60
@@ -611,7 +622,6 @@ Baby Information:
 - Room temperature: 18-22°C (babies sleep best in slightly cool rooms)
 - Humidity: 40-60% (prevents dry airways and skin)
 - Noise: under 50dB (quiet environment, though white noise up to 50dB can help)
-- Baby heart rate: 80-160 bpm (varies by age and activity)
 
 === YOUR TASK ===
 Provide a brief, helpful analysis (3-4 sentences) that:
@@ -621,12 +631,14 @@ Provide a brief, helpful analysis (3-4 sentences) that:
 3. **Reassures or contextualizes** if the awakening seems normal for the baby's age
 
 Guidelines:
-- Be warm and supportive, not alarming
-- If no significant changes detected, consider other factors (age-appropriate wake patterns, hunger, developmental leaps)
-- Prioritize the most impactful factor if multiple issues exist
-- Keep advice practical and achievable
+- Be warm and supportive, never dramatic or alarming
+- Use gentle language: "we noticed", "you might want to try", "it could help" — not commands
+- Avoid words like "significant", "critical", "drastic" — keep it calm and matter-of-fact
+- If no notable changes detected, consider other factors (age-appropriate wake patterns, hunger, developmental leaps)
+- Prioritize the most relevant factor if multiple issues exist
+- Keep advice practical and framed as suggestions
 
-Respond in a conversational tone as if speaking directly to the parents."""
+Respond in a conversational tone as if chatting with a friend who happens to be a parent."""
 
         return prompt
 
@@ -699,9 +711,9 @@ Baby Information:
                     f"- {name}: {change.direction}d by {change.change_percent:.0f}% "
                     f"(from {change.start_value}{unit} to {change.end_value}{unit})"
                 )
-            changes_text = "\nSignificant Environmental Changes:\n" + "\n".join(changes_lines)
+            changes_text = "\nEnvironmental Changes We Noticed:\n" + "\n".join(changes_lines)
         else:
-            changes_text = "\nSignificant Environmental Changes: None detected"
+            changes_text = "\nEnvironmental Changes: Nothing notable detected"
 
         sleep_hours = sleep_duration_minutes / 60
 
@@ -726,7 +738,7 @@ AGE_CONTEXT: (1 sentence about how this sleep pattern relates to typical babies 
 
 SLEEP_QUALITY: (1 sentence about the quality/duration of this sleep session)
 
-Be warm, practical, and reassuring. Focus on what parents can actually do."""
+Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders. Avoid dramatic language — keep observations calm and matter-of-fact."""
 
         return prompt
 
@@ -1035,7 +1047,7 @@ async def generate_quick_insight(
     prompt = f"""Baby woke up at {awakened_at.strftime('%H:%M')} ({time_of_day}) after sleeping {sleep_hours:.1f} hours.
 {sensor_info}
 
-In exactly 1-2 short sentences, explain the most likely reason for waking and one quick tip. Be warm and concise."""
+In exactly 1-2 short sentences, explain the most likely reason for waking and one gentle suggestion. Be warm, concise, and avoid dramatic language."""
 
     try:
         from google.genai import types

@@ -42,6 +42,7 @@ from ..services.sleep_patterns import analyze_sleep_patterns
 from ..services.correlation_analyzer import CorrelationAnalyzer
 from ..services.trend_analyzer import get_sleep_trends, get_age_recommendation
 from ..services.schedule_predictor import get_schedule_prediction
+from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -231,16 +232,20 @@ async def get_daily_sleep(
         end_date=end_date
     )
     
-    # Aggregate by date
+    # Aggregate raw duration by date (backward compatible)
     daily_data = defaultdict(lambda: {"total_minutes": 0.0, "sessions": 0})
-    
+
     for session in sessions:
         session_date = session.get("session_date")
         duration = session.get("duration_minutes") or 0.0
-        
         if session_date:
             daily_data[session_date]["total_minutes"] += duration
-            daily_data[session_date]["sessions"] += 1
+
+    # Count sleep blocks per date (grouped, not raw events)
+    blocks = group_into_sleep_blocks(sessions, source="sessions_for_range")
+    for block in blocks:
+        block_date = block.block_end.date()
+        daily_data[block_date]["sessions"] += 1
     
     # Build response data points
     data_points = []
@@ -753,23 +758,23 @@ def _generate_todays_tip(
     # Priority 1: Environment issues
     if environment.status == "needs_attention":
         if environment.temperature_status == "high":
-            return f"Consider lowering the room temperature for {baby_name}'s next sleep - babies sleep best in slightly cool rooms (18-22°C)."
+            return f"We noticed the room is a bit warm — {baby_name} might sleep more comfortably if you cool it down to around 18-22°C."
         elif environment.temperature_status == "low":
-            return f"The room might be a bit cool for {baby_name}. Try a sleep sack or adjusting the thermostat."
+            return f"The room feels a bit cool for {baby_name}. A sleep sack or a small thermostat adjustment could help."
         elif environment.humidity_status == "low":
-            return f"Low humidity can cause dry airways. Consider using a humidifier in {baby_name}'s room."
+            return f"The air seems a little dry — a humidifier in {baby_name}'s room might make things more comfortable."
         elif environment.noise_status == "high":
-            return f"Noise levels are elevated. White noise can help mask disruptive sounds for {baby_name}."
-    
+            return f"We noticed some extra noise in the room. White noise could help mask it for {baby_name}."
+
     # Priority 2: Sleep quality
     if sleep_summary.last_sleep_quality == "poor":
-        return f"Short naps are common! Try a calming pre-sleep routine to help {baby_name} settle into deeper sleep."
-    
+        return f"Short naps happen — a calming pre-sleep routine might help {baby_name} ease into deeper sleep."
+
     # Priority 3: Trends
     if weekly_trend == "declining":
-        return f"Sleep has been challenging lately. Remember, sleep patterns change - focus on consistent routines for {baby_name}."
+        return f"Sleep has been a bit uneven lately — that's normal. Sticking to consistent routines can really help {baby_name}."
     elif weekly_trend == "improving":
-        return f"Great progress this week! Keep up the consistent sleep schedule for {baby_name}."
+        return f"Nice trend this week! Keeping up the consistent schedule seems to be working well for {baby_name}."
     
     # Default tips
     default_tips = [
@@ -816,7 +821,7 @@ def _generate_quick_insights(
     if weekly_trend == "improving":
         insights.append("Sleep quality trending upward this week")
     elif weekly_trend == "declining":
-        insights.append("Sleep has been variable - consider schedule adjustments")
+        insights.append("Sleep has been a bit variable — small schedule tweaks might help")
     elif weekly_trend == "stable":
         insights.append("Sleep patterns are consistent")
     

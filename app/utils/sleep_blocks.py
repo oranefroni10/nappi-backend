@@ -1,0 +1,186 @@
+"""
+Sleep Block Grouping Utility.
+
+Groups consecutive awakening events into logical sleep blocks.
+A sleep block is a continuous period of sleep with brief interruptions.
+E.g., a night sleep from 9 PM to 6 AM with 2 brief wake-ups = 1 sleep block
+with 3 constituent events and 2 interruptions.
+"""
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_GAP_THRESHOLD_MINUTES = 30
+
+
+@dataclass
+class SleepBlock:
+    """A logical sleep block grouping consecutive awakening events."""
+    block_start: datetime
+    block_end: datetime
+    total_sleep_minutes: float
+    total_block_minutes: float
+    interruption_count: int
+    event_count: int
+    events: List[Dict[str, Any]] = field(default_factory=list)
+
+
+def group_into_sleep_blocks(
+    events: List[Dict[str, Any]],
+    gap_threshold_minutes: float = DEFAULT_GAP_THRESHOLD_MINUTES,
+    source: str = "auto"
+) -> List[SleepBlock]:
+    """
+    Group consecutive awakening events into sleep blocks.
+
+    Events within gap_threshold_minutes of each other are grouped together.
+
+    Args:
+        events: List of event dicts.
+        gap_threshold_minutes: Max gap (minutes) to group events.
+        source: One of "awakenings_with_insights", "events_for_period",
+                "sessions_for_range", or "auto".
+
+    Returns:
+        List of SleepBlock objects, sorted chronologically.
+    """
+    if not events:
+        return []
+
+    normalized = []
+    for event in events:
+        n = _normalize_event(event, source)
+        if n:
+            normalized.append(n)
+
+    if not normalized:
+        return []
+
+    normalized.sort(key=lambda e: e["sleep_started_at"])
+
+    blocks = []
+    current_block_events = [normalized[0]]
+
+    for i in range(1, len(normalized)):
+        prev = current_block_events[-1]
+        curr = normalized[i]
+
+        gap = (curr["sleep_started_at"] - prev["awakened_at"]).total_seconds() / 60.0
+
+        if gap <= gap_threshold_minutes:
+            current_block_events.append(curr)
+        else:
+            blocks.append(_build_block(current_block_events))
+            current_block_events = [curr]
+
+    blocks.append(_build_block(current_block_events))
+
+    return blocks
+
+
+def _detect_source(event: Dict[str, Any]) -> str:
+    """Auto-detect the source format of an event dict."""
+    if "event_metadata" in event:
+        return "events_for_period"
+    if "ai_insight" in event:
+        return "awakenings_with_insights"
+    if "session_date" in event:
+        return "sessions_for_range"
+    return "unknown"
+
+
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    """Parse a timestamp from various formats."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            pass
+    return None
+
+
+def _normalize_event(event: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
+    """
+    Extract normalized timestamps from an event dict regardless of source.
+
+    Returns dict with sleep_started_at, awakened_at, duration_minutes,
+    and original event reference. Returns None if normalization fails.
+    """
+    if source == "auto":
+        source = _detect_source(event)
+
+    try:
+        if source == "awakenings_with_insights":
+            awakened_at = _parse_timestamp(event.get("awakened_at"))
+            duration = event.get("sleep_duration_minutes") or 0.0
+            if not awakened_at:
+                return None
+            sleep_started_at = awakened_at - timedelta(minutes=duration)
+            return {
+                "sleep_started_at": sleep_started_at,
+                "awakened_at": awakened_at,
+                "duration_minutes": duration,
+                "original": event,
+            }
+
+        elif source == "events_for_period":
+            metadata = event.get("event_metadata", {})
+            if isinstance(metadata, str):
+                import json
+                metadata = json.loads(metadata)
+            sleep_started_at = _parse_timestamp(metadata.get("sleep_started_at"))
+            awakened_at = _parse_timestamp(metadata.get("awakened_at"))
+            duration = metadata.get("sleep_duration_minutes") or 0.0
+            if not sleep_started_at or not awakened_at:
+                return None
+            return {
+                "sleep_started_at": sleep_started_at,
+                "awakened_at": awakened_at,
+                "duration_minutes": duration,
+                "original": event,
+            }
+
+        elif source == "sessions_for_range":
+            sleep_started_at = _parse_timestamp(event.get("sleep_started_at"))
+            awakened_at = _parse_timestamp(event.get("awakened_at"))
+            duration = event.get("duration_minutes") or 0.0
+            if not sleep_started_at or not awakened_at:
+                return None
+            return {
+                "sleep_started_at": sleep_started_at,
+                "awakened_at": awakened_at,
+                "duration_minutes": duration,
+                "original": event,
+            }
+
+        else:
+            logger.warning(f"Unknown sleep block source: {source}")
+            return None
+
+    except Exception as e:
+        logger.warning(f"Failed to normalize event ({source}): {e}")
+        return None
+
+
+def _build_block(normalized_events: List[Dict[str, Any]]) -> SleepBlock:
+    """Build a SleepBlock from a list of normalized events."""
+    block_start = normalized_events[0]["sleep_started_at"]
+    block_end = normalized_events[-1]["awakened_at"]
+    total_sleep = sum(e["duration_minutes"] for e in normalized_events)
+    total_block = (block_end - block_start).total_seconds() / 60.0
+
+    return SleepBlock(
+        block_start=block_start,
+        block_end=block_end,
+        total_sleep_minutes=total_sleep,
+        total_block_minutes=total_block,
+        interruption_count=len(normalized_events) - 1,
+        event_count=len(normalized_events),
+        events=[e["original"] for e in normalized_events],
+    )

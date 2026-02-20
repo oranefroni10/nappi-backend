@@ -33,10 +33,12 @@ class Settings:
     GEMINI_MODEL_CHAT: str = os.getenv("GEMINI_MODEL_CHAT", "models/gemini-2.5-flash")
     GEMINI_MODEL_INSIGHTS: str = os.getenv("GEMINI_MODEL_INSIGHTS", "models/gemini-2.5-flash")
     
-    # Correlation Analysis Configuration
-    CORRELATION_CHANGE_THRESHOLD_PERCENT: float = float(
-        os.getenv("CORRELATION_CHANGE_THRESHOLD_PERCENT", "10.0")
-    )
+    # Correlation Analysis Configuration — per-sensor thresholds (% change)
+    CORRELATION_CHANGE_THRESHOLDS: dict = {
+        "temp_celcius": 5.0,
+        "humidity": 5.0,
+        "noise_decibel": 100.0,
+    }
     CORRELATION_TIME_WINDOW_MINUTES: int = int(
         os.getenv("CORRELATION_TIME_WINDOW_MINUTES", "60")
     )
