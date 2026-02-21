@@ -44,6 +44,7 @@ class SleepStateManager:
         self._intervention_cooldowns: Dict[int, datetime] = {}  # baby_id -> cooldown_until
         self._lock = asyncio.Lock()
     
+    # Used by: sensor_events.py (sleep-start endpoint, parent override)
     async def start_sleep(self, baby_id: int) -> SleepSession:
         """
         Record that a baby has fallen asleep.
@@ -67,6 +68,7 @@ class SleepStateManager:
             logger.info(f"Baby {baby_id} started sleeping at {session.start_time}")
             return session
     
+    # Used by: sensor_events.py (sleep-end endpoint, parent override)
     async def end_sleep(self, baby_id: int) -> Optional[SleepSession]:
         """
         Record that a baby has woken up.
@@ -88,6 +90,7 @@ class SleepStateManager:
             )
             return session
     
+    # Used by: tasks.py (sensor polling scheduler), sensor_events.py (list sleeping babies)
     async def get_sleeping_babies(self) -> List[int]:
         """
         Get list of all currently sleeping baby IDs.
@@ -98,6 +101,7 @@ class SleepStateManager:
         async with self._lock:
             return list(self._sleeping_babies.keys())
     
+    # Used by: sensor_events.py (get sleep status endpoint)
     async def get_sleep_session(self, baby_id: int) -> Optional[SleepSession]:
         """
         Get the sleep session for a specific baby.
@@ -111,6 +115,7 @@ class SleepStateManager:
         async with self._lock:
             return self._sleeping_babies.get(baby_id)
     
+    # Used by: sensor_events.py (cooldown check before sleep-start/end)
     async def is_sleeping(self, baby_id: int) -> bool:
         """
         Check if a specific baby is currently sleeping.
@@ -124,6 +129,7 @@ class SleepStateManager:
         async with self._lock:
             return baby_id in self._sleeping_babies
     
+    # Used by: (internal utility, no external callers found)
     async def get_sleep_count(self) -> int:
         """
         Get the count of currently sleeping babies.
@@ -138,6 +144,7 @@ class SleepStateManager:
     # Intervention Cooldown Methods
     # ============================================
     
+    # Used by: sensor_events.py (parent override endpoint)
     async def start_intervention_cooldown(self, baby_id: int) -> datetime:
         """
         Start an intervention cooldown period for a baby.
@@ -161,6 +168,7 @@ class SleepStateManager:
             )
             return cooldown_until
     
+    # Used by: sensor_events.py (sleep-start/end cooldown guard, cooldown status endpoint)
     async def is_in_cooldown(self, baby_id: int) -> bool:
         """
         Check if a baby is in intervention cooldown.
@@ -186,6 +194,7 @@ class SleepStateManager:
             logger.info(f"Intervention cooldown expired for baby {baby_id}")
             return False
     
+    # Used by: sensor_events.py (cooldown guard response, cooldown status endpoint)
     async def get_cooldown_remaining(self, baby_id: int) -> Optional[int]:
         """
         Get the remaining cooldown time in minutes.
@@ -209,6 +218,7 @@ class SleepStateManager:
             del self._intervention_cooldowns[baby_id]
             return None
     
+    # Used by: (internal utility, no external callers found)
     async def clear_cooldown(self, baby_id: int) -> bool:
         """
         Clear the intervention cooldown for a baby (if any).
@@ -231,6 +241,7 @@ class SleepStateManager:
 _sleep_state_manager: Optional[SleepStateManager] = None
 
 
+# Used by: sensor_events.py (all sleep endpoints), tasks.py (sensor polling scheduler)
 def get_sleep_state_manager() -> SleepStateManager:
     """
     Get the global SleepStateManager singleton.

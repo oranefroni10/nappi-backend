@@ -18,6 +18,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 
+# Used by: alerts.py (push subscription endpoints), alert_service.py (send_notification on threshold breach)
 class PushService:
     """
     Service for managing Web Push notifications.
@@ -30,6 +31,7 @@ class PushService:
         self._vapid_claims: Dict[str, str] = {}
         self._load_vapid_config()
     
+    # Used by: __init__() (loads VAPID keys on instantiation)
     def _load_vapid_config(self):
         """Load VAPID configuration from environment."""
         self._vapid_private_key = getattr(settings, 'VAPID_PRIVATE_KEY', None)
@@ -47,16 +49,19 @@ class PushService:
                 "Generate keys with: npx web-push generate-vapid-keys"
             )
     
+    # Used by: alerts.py (GET /alerts/push/vapid-key, POST /alerts/push/subscribe), send_notification()
     @property
     def is_configured(self) -> bool:
         """Check if push notifications are properly configured."""
         return bool(self._vapid_private_key) and bool(self._vapid_public_key)
     
+    # Used by: alerts.py (GET /alerts/push/vapid-key)
     @property
     def public_key(self) -> Optional[str]:
         """Get the VAPID public key for client subscription."""
         return self._vapid_public_key
     
+    # Used by: alerts.py (POST /alerts/push/subscribe)
     async def save_subscription(
         self,
         user_id: int,
@@ -104,6 +109,7 @@ class PushService:
             logger.error(f"Failed to save push subscription for user {user_id}: {e}")
             return False
     
+    # Used by: alerts.py (DELETE /alerts/push/unsubscribe), send_notification() (removes expired subscriptions)
     async def remove_subscription(self, user_id: int) -> bool:
         """
         Remove a user's push subscription.
@@ -132,6 +138,7 @@ class PushService:
             logger.error(f"Failed to remove push subscription for user {user_id}: {e}")
             return False
     
+    # Used by: send_notification() (fetches subscription info before sending push)
     async def get_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
         """
         Get a user's push subscription.
@@ -166,6 +173,7 @@ class PushService:
             logger.error(f"Failed to get push subscription for user {user_id}: {e}")
             return None
     
+    # Used by: alerts.py (GET /alerts/push/status)
     async def has_subscription(self, user_id: int) -> bool:
         """Check if a user has an active push subscription."""
         try:
@@ -182,6 +190,7 @@ class PushService:
             logger.error(f"Failed to check subscription for user {user_id}: {e}")
             return False
     
+    # Used by: alert_service.py (_send_push_notification on threshold breach)
     async def send_notification(
         self,
         user_id: int,
@@ -252,6 +261,7 @@ class PushService:
 _push_service: Optional[PushService] = None
 
 
+# Used by: alerts.py (push endpoints), alert_service.py (threshold breach notifications)
 def get_push_service() -> PushService:
     """Get the push service singleton."""
     global _push_service

@@ -22,6 +22,7 @@ _data_source = HttpSensorSource(
 )
 
 
+# Used by: start_scheduler() (IntervalTrigger every SENSOR_POLL_INTERVAL_SECONDS)
 async def _run_baby_sensor_collection():
     """
     Wrapper function for the scheduled task.
@@ -30,6 +31,7 @@ async def _run_baby_sensor_collection():
     await collect_and_store_baby_sensor_data_task(_data_source)
 
 
+# Used by: main.py (lifespan startup)
 async def start_scheduler():
     """
     Initialize and start the APScheduler.
@@ -95,6 +97,7 @@ async def start_scheduler():
     )
 
 
+# Used by: main.py (lifespan shutdown)
 async def stop_scheduler():
     global scheduler
 
@@ -108,6 +111,7 @@ async def stop_scheduler():
     logger.info("Scheduler stopped")
 
 
+# Used by: not currently called (available for health/debug endpoints)
 def get_scheduler_status() -> dict:
     global scheduler
 

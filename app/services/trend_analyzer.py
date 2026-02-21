@@ -18,6 +18,7 @@ from statistics import mean, stdev
 
 from .babies_data import BabyDataManager
 from ..core.settings import settings
+from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ AGE_SLEEP_RECOMMENDATIONS = {
 _gemini_client = None
 
 
+# Used by: TrendAnalyzer.generate_ai_summary()
 def _get_gemini_client():
     """Lazy initialization of Gemini client."""
     global _gemini_client
@@ -50,6 +52,7 @@ def _get_gemini_client():
     return _gemini_client
 
 
+# Used by: TrendAnalyzer.generate_ai_summary(), get_sleep_trends(), stats.py (age recommendation in response)
 def get_age_recommendation(age_months: int) -> Dict[str, Any]:
     """Get sleep recommendations for a specific age in months."""
     for (min_age, max_age), recommendations in AGE_SLEEP_RECOMMENDATIONS.items():
@@ -103,6 +106,7 @@ class TrendAnalyzer:
     def __init__(self):
         self.baby_manager = BabyDataManager()
 
+    # Used by: get_sleep_trends() (7-day and 30-day trend analysis)
     async def analyze_trends(
         self,
         baby_id: int,
@@ -206,44 +210,53 @@ class TrendAnalyzer:
             daily_data=daily_data
         )
 
+    # Used by: self.analyze_trends() (aggregates sessions + summaries by date)
     def _aggregate_daily_data(
         self,
         sessions: List[Dict[str, Any]],
         summaries: List[Dict[str, Any]]
     ) -> List[DailyStats]:
-        """Aggregate session and summary data by date."""
+        """Aggregate session and summary data by date, using sleep block grouping."""
         from collections import defaultdict
-        
+
         # Build summary lookup
         summary_by_date = {s["summary_date"]: s for s in summaries}
-        
-        # Aggregate sessions by date
-        daily_sleep = defaultdict(lambda: {"total_minutes": 0.0, "count": 0})
-        
+
+        # Aggregate raw duration by date (backward compatible — no day-shifting)
+        daily_sleep = defaultdict(lambda: {"total_minutes": 0.0, "block_count": 0})
+
         for session in sessions:
             session_date = session.get("session_date")
             duration = session.get("duration_minutes") or 0.0
-            
             if session_date:
                 daily_sleep[session_date]["total_minutes"] += duration
-                daily_sleep[session_date]["count"] += 1
-        
+
+        # Count sleep blocks per date
+        blocks = group_into_sleep_blocks(sessions, source="sessions_for_range")
+        for block in blocks:
+            block_date = block.block_end.date()
+            if block_date in daily_sleep:
+                daily_sleep[block_date]["block_count"] += 1
+            else:
+                daily_sleep[block_date]["block_count"] += 1
+
         # Build DailyStats list
         daily_data = []
         for day_date, stats in sorted(daily_sleep.items()):
             summary = summary_by_date.get(day_date, {})
-            
+
             daily_data.append(DailyStats(
                 date=day_date,
                 total_sleep_hours=round(stats["total_minutes"] / 60.0, 2),
-                session_count=stats["count"],
+                session_count=stats["block_count"],
                 avg_temp=summary.get("avg_temp"),
                 avg_humidity=summary.get("avg_humidity"),
                 avg_noise=summary.get("avg_noise")
             ))
-        
+
         return daily_data
 
+    # Used by: get_sleep_trends() (AI-powered weekly/monthly summary)
     async def generate_ai_summary(
         self,
         baby_id: int,
@@ -290,7 +303,7 @@ class TrendAnalyzer:
             response = await loop.run_in_executor(
                 None,
                 lambda: client.models.generate_content(
-                    model="models/gemini-2.5-flash",
+                    model=settings.GEMINI_MODEL_INSIGHTS,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
@@ -307,6 +320,7 @@ class TrendAnalyzer:
         
         return None
 
+    # Used by: self.generate_ai_summary() (builds Gemini prompt with trend data)
     def _build_trend_prompt(
         self,
         baby_name: str,
@@ -362,16 +376,17 @@ SUMMARY: (2-3 sentences overall assessment)
 
 HIGHLIGHTS: (2-3 positive observations, one per line starting with "- ")
 
-CONCERNS: (1-2 areas to watch, or "None" if everything looks good, one per line starting with "- ")
+THINGS_TO_WATCH: (1-2 areas worth keeping an eye on, or "None" if everything looks good, one per line starting with "- ")
 
-RECOMMENDATIONS: (2-3 actionable tips, one per line starting with "- ")
+SUGGESTIONS: (2-3 gentle, actionable tips framed as options — e.g., "you might try...", one per line starting with "- ")
 
 AGE_COMPARISON: (1 sentence comparing to typical babies this age)
 
-Be warm, supportive, and practical. Don't be alarming - baby sleep varies greatly."""
+Be warm, supportive, and practical. Frame suggestions as options, not orders. Avoid dramatic language — baby sleep varies greatly and small changes are normal."""
 
         return prompt
 
+    # Used by: self.generate_ai_summary() (parses Gemini response into structured insight)
     def _parse_ai_response(
         self,
         response_text: str,
@@ -398,9 +413,9 @@ Be warm, supportive, and practical. Don't be alarming - baby sleep varies greatl
                 summary = line.replace("SUMMARY:", "").strip()
             elif line.startswith("HIGHLIGHTS:"):
                 current_section = "highlights"
-            elif line.startswith("CONCERNS:"):
+            elif line.startswith("THINGS_TO_WATCH:") or line.startswith("CONCERNS:"):
                 current_section = "concerns"
-            elif line.startswith("RECOMMENDATIONS:"):
+            elif line.startswith("SUGGESTIONS:") or line.startswith("RECOMMENDATIONS:"):
                 current_section = "recommendations"
             elif line.startswith("AGE_COMPARISON:"):
                 current_section = "age_comparison"
@@ -431,6 +446,7 @@ Be warm, supportive, and practical. Don't be alarming - baby sleep varies greatl
             age_comparison=age_comparison.strip() or f"Sleep patterns are being compared to typical {self._format_age(age_months)} babies."
         )
 
+    # Used by: self._build_trend_prompt(), self._parse_ai_response() (formats age for prompts and fallback text)
     def _format_age(self, age_months: int) -> str:
         """Format age in a readable way."""
         if age_months < 1:
@@ -449,7 +465,7 @@ Be warm, supportive, and practical. Don't be alarming - baby sleep varies greatl
             return f"{years} year{'s' if years > 1 else ''} and {months} month{'s' if months > 1 else ''} old"
 
 
-# Convenience function for direct use
+# Used by: stats.py (GET /trends endpoint, GET /last-sleep summary endpoint)
 async def get_sleep_trends(
     baby_id: int,
     include_ai_summary: bool = True

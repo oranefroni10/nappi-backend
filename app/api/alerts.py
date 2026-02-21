@@ -7,6 +7,7 @@ Provides:
 - POST /alerts/{id}/read - Mark a single alert as read
 - POST /alerts/read-all - Mark all alerts as read
 - GET /alerts/unread-count - Get count of unread alerts
+- DELETE /alerts - Delete alerts by IDs
 - POST /push/subscribe - Subscribe to push notifications
 - POST /push/unsubscribe - Unsubscribe from push notifications
 - GET /push/vapid-key - Get VAPID public key for subscription
@@ -67,6 +68,16 @@ class MarkAllReadResponse(BaseModel):
     updated_count: int
 
 
+class DeleteAlertsRequest(BaseModel):
+    """Delete alerts request."""
+    alert_ids: List[int]
+
+
+class DeleteAlertsResponse(BaseModel):
+    """Delete alerts response."""
+    deleted_count: int
+
+
 class PushSubscriptionRequest(BaseModel):
     """Push subscription request."""
     endpoint: str
@@ -89,6 +100,7 @@ class VapidKeyResponse(BaseModel):
 # SSE Endpoint
 # ============================================
 
+# Used by: Notifications page — real-time SSE alert stream (via useAlerts hook)
 @router.get("/stream")
 async def alerts_stream(user_id: int = Query(..., description="User ID to subscribe for")):
     """
@@ -142,6 +154,7 @@ async def alerts_stream(user_id: int = Query(..., description="User ID to subscr
 # Alert History Endpoints
 # ============================================
 
+# Used by: Notifications page — paginated alert history list
 @router.get("/history", response_model=AlertListResponse)
 async def get_alerts_history(
     user_id: int = Query(..., description="User ID"),
@@ -183,6 +196,7 @@ async def get_alerts_history(
     )
 
 
+# Used by: Notifications page — unread badge count
 @router.get("/unread-count", response_model=UnreadCountResponse)
 async def get_unread_count(
     user_id: int = Query(..., description="User ID")
@@ -195,6 +209,7 @@ async def get_unread_count(
     return UnreadCountResponse(count=count)
 
 
+# Used by: Notifications page — mark individual alert as read
 @router.post("/{alert_id}/read", response_model=MarkReadResponse)
 async def mark_alert_read(
     alert_id: int,
@@ -215,6 +230,7 @@ async def mark_alert_read(
     return MarkReadResponse(success=True)
 
 
+# Used by: Notifications page — "mark all as read" button
 @router.post("/read-all", response_model=MarkAllReadResponse)
 async def mark_all_alerts_read(
     user_id: int = Query(..., description="User ID")
@@ -227,6 +243,31 @@ async def mark_all_alerts_read(
     return MarkAllReadResponse(updated_count=updated_count)
 
 
+# Used by: Notifications page — delete individual or bulk alerts
+@router.delete("", response_model=DeleteAlertsResponse)
+async def delete_alerts(
+    request: DeleteAlertsRequest,
+    user_id: int = Query(..., description="User ID")
+):
+    """
+    Delete alerts by IDs for a user.
+    """
+    if not request.alert_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="alert_ids must not be empty"
+        )
+    if len(request.alert_ids) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete more than 100 alerts at once"
+        )
+
+    alert_service = get_alert_service()
+    deleted_count = await alert_service.delete_alerts(request.alert_ids, user_id)
+    return DeleteAlertsResponse(deleted_count=deleted_count)
+
+
 # ============================================
 # Push Notification Endpoints
 # ============================================
@@ -234,6 +275,7 @@ async def mark_all_alerts_read(
 push_router = APIRouter(prefix="/push", tags=["push-notifications"])
 
 
+# Used by: User Profile page — fetches VAPID key for push notification subscription
 @push_router.get("/vapid-key", response_model=VapidKeyResponse)
 async def get_vapid_public_key():
     """
@@ -248,6 +290,7 @@ async def get_vapid_public_key():
     )
 
 
+# Used by: User Profile page — enable push notifications toggle
 @push_router.post("/subscribe", response_model=PushSubscriptionResponse)
 async def subscribe_to_push(
     request: PushSubscriptionRequest,
@@ -295,6 +338,7 @@ async def subscribe_to_push(
     )
 
 
+# Used by: User Profile page — disable push notifications toggle
 @push_router.post("/unsubscribe", response_model=PushSubscriptionResponse)
 async def unsubscribe_from_push(
     user_id: int = Query(..., description="User ID")
@@ -311,6 +355,7 @@ async def unsubscribe_from_push(
     )
 
 
+# Used by: User Profile page — checks if push notifications are active for toggle state
 @push_router.get("/status")
 async def get_push_status(
     user_id: int = Query(..., description="User ID")

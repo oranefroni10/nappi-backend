@@ -3,28 +3,22 @@ from datetime import datetime, date
 from typing import List, Optional, Literal
 
 
-class SleepStageMetric(BaseModel):
-    stage: str
-    start_time: datetime
-    end_time: datetime
-
-
 class LastSleepSummary(BaseModel):
     baby_name: str
     started_at: datetime
     ended_at: datetime
     total_sleep_minutes: int
     awakenings_count: int
-    sleep_quality_score: int
-    stages: List[SleepStageMetric]
+    avg_temperature: Optional[float] = None
+    avg_humidity: Optional[float] = None
+    max_noise: Optional[float] = None
 
 
 class RoomMetrics(BaseModel):
-    temperature_c: float
-    humidity_percent: float
-    noise_db: float
-    light_lux: float
-    measured_at: datetime
+    temperature_c: Optional[float] = None
+    humidity_percent: Optional[float] = None
+    noise_db: Optional[float] = None
+    measured_at: Optional[datetime] = None
     notes: Optional[str] = None
 
 
@@ -49,7 +43,6 @@ class LastSensorReadings(BaseModel):
     temp_celcius: Optional[float] = None
     humidity: Optional[float] = None
     noise_decibel: Optional[float] = None
-    heart_rate: Optional[float] = None
     recorded_at: Optional[datetime] = None
 
 

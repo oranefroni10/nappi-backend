@@ -10,6 +10,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 
+# Used by: auth.py (POST /auth/signup, /auth/register-baby, /auth/signin, /auth/change-password)
 class AuthManager:
     """
     Manager class for authentication operations.
@@ -19,6 +20,7 @@ class AuthManager:
     def __init__(self):
         self.database = get_database()
 
+    # Used by: auth.py (POST /auth/signup)
     async def signup(
         self,
         username: str,
@@ -83,9 +85,10 @@ class AuthManager:
             user = User(**user_row)
             baby = Babies(**baby_row) if baby_row else None
             
-            logger.info(f"✅ User registered: {first_name} {last_name}, baby_found={baby is not None}")
+            logger.info(f"User registered: {first_name} {last_name}, baby_found={baby is not None}")
             return user, baby, baby is not None
 
+    # Used by: auth.py (POST /auth/register-baby)
     async def register_baby(
         self,
         user_id: int,
@@ -143,9 +146,10 @@ class AuthManager:
             )
             baby = Babies(**baby_row)
             
-            logger.info(f"✅ Baby registered: {first_name} {user_row['last_name']} → user_id={user_id}")
+            logger.info(f"Baby registered: {first_name} {user_row['last_name']} → user_id={user_id}")
             return user, baby
 
+    # Used by: auth.py (POST /auth/signin)
     async def signin(
         self,
         username: str,
@@ -194,9 +198,10 @@ class AuthManager:
                     created_at=row["created_at"]
                 )
             
-            logger.info(f"✅ User signed in: {username}")
+            logger.info(f"User signed in: {username}")
             return user, baby
 
+    # Used by: auth.py (POST /auth/change-password)
     async def change_password(
             self,
             user_id: int,
@@ -221,7 +226,7 @@ class AuthManager:
             await session.commit()
             updated_user = result.fetchone()
             if updated_user:
-                logger.info(f"✅ Password updated for user")
+                logger.info(f"Password updated for user")
                 return True
             logger.warning(f"Failed password update attempt for user_id: {user_id}")
             return False

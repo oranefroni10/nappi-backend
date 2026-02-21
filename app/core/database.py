@@ -61,6 +61,7 @@ class Base(DeclarativeBase):
     pass
 
 
+# Used by: all services and endpoints via get_database() singleton
 class DatabaseManager:
     """
     Singleton that manages the database connection pool.
@@ -82,6 +83,7 @@ class DatabaseManager:
     def is_connected(self) -> bool:
         return self._engine is not None
     
+    # Used by: main.py lifespan (startup)
     async def connect(self, database_url: str) -> None:
         """Initialize the connection pool. Call once at startup."""
         if self._engine is not None:
@@ -99,6 +101,7 @@ class DatabaseManager:
         
         logger.info("Database connected")
     
+    # Used by: main.py lifespan (shutdown)
     async def disconnect(self) -> None:
         """Close the connection pool. Call once at shutdown."""
         if self._engine is None:
@@ -109,6 +112,7 @@ class DatabaseManager:
         self._engine = None
         self._session_factory = None
     
+    # Used by: endpoints.py, babies_data.py, auth_manager.py, alert_service.py, push_service.py, correlation_analyzer.py, seed_demo_data.py
     def session(self) -> AsyncSession:
         """
         Get a session for database operations.
@@ -127,6 +131,7 @@ class DatabaseManager:
 _db: Optional[DatabaseManager] = None
 
 
+# Used by: main.py, endpoints.py, babies_data.py, auth_manager.py, alert_service.py, push_service.py, seed_demo_data.py
 def get_database() -> DatabaseManager:
     """Get the database manager singleton."""
     global _db

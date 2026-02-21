@@ -19,6 +19,7 @@ logging.basicConfig(
 )
 
 
+# Used by: FastAPI app startup/shutdown (initializes DB, scheduler; tears down on exit)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -35,8 +36,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Baby Monitor API",
-    version="0.1.0",
-    description="Backend for baby sleep & room monitoring (Sprint 1 skeleton).",
+    version="3.0.0",
+    description="Nappi - Baby Sleep Monitoring API",
     lifespan=lifespan
 )
 
