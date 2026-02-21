@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from app.services.alert_service import get_alert_service, get_sse_manager, Alert
 from app.services.push_service import get_push_service
+from app.core.constants import SSE_KEEPALIVE_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ async def alerts_stream(user_id: int = Query(..., description="User ID to subscr
             while True:
                 try:
                     # Wait for new alerts with timeout for keepalive
-                    alert = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    alert = await asyncio.wait_for(queue.get(), timeout=float(SSE_KEEPALIVE_SECONDS))
                     yield f"data: {json.dumps(alert.to_dict())}\n\n"
                 except asyncio.TimeoutError:
                     # Send keepalive ping

@@ -496,7 +496,39 @@ GET /stats/daily-sleep?baby_id=1&start_date=2026-02-01&end_date=2026-02-14
 
 Returns total sleep hours + session count per day. Session counts use sleep blocks (not raw events).
 
-### 5. Trends (`/stats/trends`)
+### 5. Awakenings per Session (Statistics Page Chart)
+
+The **Awakenings per Session** chart on the Statistics page shows how sleep quality is trending over time. It plots a single metric per day: the average number of times the baby woke up within each sleep session.
+
+**Calculation:**
+
+1. Fetch all awakening events for the selected date range via `GET /stats/daily-sleep`
+2. Group raw events into **sleep blocks** using `group_into_sleep_blocks()` (30-minute gap threshold)
+3. For each sleep block, `interruption_count = number of events in block - 1` (e.g., a block with 3 events had 2 awakenings)
+4. Per day: sum all `interruption_count` values across blocks, divide by the number of blocks (sessions)
+
+```
+awakenings_per_session = total_awakenings_that_day / total_sessions_that_day
+```
+
+**Example:**
+
+| Day | Sessions (blocks) | Awakenings (interruptions) | Ratio |
+|-----|-------------------|---------------------------|-------|
+| Feb 18 | 3 (morning nap, afternoon nap, night sleep) | 4 (0 + 1 + 3) | 1.3 |
+| Feb 19 | 2 (afternoon nap, night sleep) | 1 (0 + 1) | 0.5 |
+| Feb 20 | 3 | 2 | 0.7 |
+
+**How to read it:**
+
+- **Line going down** = improvement — baby is sleeping more continuously with fewer interruptions
+- **Line going up** = more fragmented sleep — baby is waking more often within sessions
+- **Value of 0** = no awakenings at all — every session was uninterrupted
+- **Value of 1** = on average, baby woke once per session
+
+This metric is more useful than raw awakening counts because it normalizes against the number of sessions. A day with 4 awakenings across 4 naps (ratio 1.0) is very different from 4 awakenings in a single night sleep (ratio 4.0).
+
+### 6. Trends (`/stats/trends`)
 
 ```
 GET /stats/trends?baby_id=1
@@ -507,7 +539,7 @@ Returns 7-day and 30-day trends:
 - `consistency_score`: 1 - (std_dev / mean), range 0-1
 - `ai_insights`: Gemini-generated summary, highlights, things to watch, suggestions
 
-### Date Range Validation
+### 7. Date Range Validation
 
 | Rule | Value |
 |------|-------|

@@ -8,6 +8,7 @@ Endpoints:
 - GET /stats/insights - AI-powered sleep insights from Gemini
 """
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta
 from typing import List, Literal, Optional
@@ -15,6 +16,16 @@ from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query
 
+from ..core.settings import settings
+from ..core.utils import SENSOR_TO_ENDPOINT_MAP, SENSOR_TO_DB_COLUMN_MAP
+from ..core.constants import (
+    TEMP_OPTIMAL_HIGH_C, TEMP_OPTIMAL_LOW_C,
+    HUMIDITY_OPTIMAL_HIGH_PCT, HUMIDITY_OPTIMAL_LOW_PCT,
+    NOISE_ALERT_HIGH_DB, STATS_MIN_DAYS, STATS_MAX_DAYS,
+    SENSOR_FETCH_TIMEOUT_SECONDS,
+    GEMINI_TIP_TEMPERATURE, GEMINI_TIP_MAX_TOKENS,
+)
+from ..services.data_miner import HttpSensorSource
 from .models import (
     SensorDataPoint,
     SensorStatsResponse,
@@ -48,9 +59,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stats", tags=["statistics"])
 
-# Validation constants
-MIN_DAYS = 7
-MAX_DAYS = 90  # 3 months
+# Validation constants — from centralized constants
+MIN_DAYS = STATS_MIN_DAYS
+MAX_DAYS = STATS_MAX_DAYS
 
 
 # Used by: get_sensor_stats, get_daily_sleep — validates date range bounds (7-90 days)
@@ -238,7 +249,7 @@ async def get_daily_sleep(
     )
     
     # Aggregate raw duration by date (backward compatible)
-    daily_data = defaultdict(lambda: {"total_minutes": 0.0, "sessions": 0})
+    daily_data = defaultdict(lambda: {"total_minutes": 0.0, "sessions": 0, "awakenings": 0})
 
     for session in sessions:
         session_date = session.get("session_date")
@@ -246,19 +257,21 @@ async def get_daily_sleep(
         if session_date:
             daily_data[session_date]["total_minutes"] += duration
 
-    # Count sleep blocks per date (grouped, not raw events)
+    # Count sleep blocks and awakenings per date (grouped, not raw events)
     blocks = group_into_sleep_blocks(sessions, source="sessions_for_range")
     for block in blocks:
         block_date = block.block_end.date()
         daily_data[block_date]["sessions"] += 1
-    
+        daily_data[block_date]["awakenings"] += block.interruption_count
+
     # Build response data points
     data_points = []
     for day_date, stats in sorted(daily_data.items()):
         data_points.append(DailySleepPoint(
             date=day_date,
             total_hours=round(stats["total_minutes"] / 60.0, 2),
-            sessions_count=stats["sessions"]
+            sessions_count=stats["sessions"],
+            awakenings_count=stats["awakenings"]
         ))
     
     logger.info(
@@ -540,25 +553,46 @@ async def get_ai_summary(
         sleep_duration = latest_event.get("sleep_duration_minutes")
         if sleep_duration:
             sleep_hours = sleep_duration / 60.0
-            quality = "good" if sleep_hours >= 1.5 else ("fair" if sleep_hours >= 0.75 else "poor")
             sleep_summary = SleepQualitySummary(
                 last_sleep_hours=round(sleep_hours, 1),
-                last_sleep_quality=quality,
                 message=f"{baby_name}'s last sleep was {sleep_hours:.1f} hours"
             )
     
-    # Get current room conditions
-    last_readings = await baby_manager.get_last_sensor_readings(baby_id)
-    
+    # Get current room conditions — try live sensors first, fall back to DB
+    live_data = {}
+    try:
+        data_source = HttpSensorSource(
+            base_url=settings.SENSOR_API_BASE_URL,
+            endpoint_map=SENSOR_TO_ENDPOINT_MAP,
+            timeout_seconds=SENSOR_FETCH_TIMEOUT_SECONDS,
+        )
+        sensor_names = list(SENSOR_TO_ENDPOINT_MAP.keys())
+        results = await asyncio.gather(
+            *[data_source.get_sensor_data(sensor, baby_id) for sensor in sensor_names],
+            return_exceptions=True,
+        )
+        for sensor_name, result in zip(sensor_names, results):
+            if result and not isinstance(result, Exception) and isinstance(result, dict) and "value" in result:
+                db_column = SENSOR_TO_DB_COLUMN_MAP.get(sensor_name)
+                if db_column:
+                    live_data[db_column] = result["value"]
+    except Exception as e:
+        logger.warning(f"Live sensor fetch failed for ai-summary baby {baby_id}: {e}")
+
+    if not live_data:
+        last_readings = await baby_manager.get_last_sensor_readings(baby_id)
+        if last_readings:
+            live_data = last_readings
+
     environment = EnvironmentStatus(
         status="unknown",
         message="No recent sensor data available"
     )
-    
-    if last_readings:
-        temp = last_readings.get("temp_celcius")
-        humidity = last_readings.get("humidity")
-        noise = last_readings.get("noise_decibel")
+
+    if live_data:
+        temp = live_data.get("temp_celcius")
+        humidity = live_data.get("humidity")
+        noise = live_data.get("noise_decibel")
         
         issues = []
         temp_status = "optimal"
@@ -566,22 +600,22 @@ async def get_ai_summary(
         noise_status = "optimal"
         
         if temp:
-            if temp > 24:
+            if temp > TEMP_OPTIMAL_HIGH_C:
                 temp_status = "high"
                 issues.append("temperature is high")
-            elif temp < 18:
+            elif temp < TEMP_OPTIMAL_LOW_C:
                 temp_status = "low"
                 issues.append("temperature is low")
-        
+
         if humidity:
-            if humidity > 60:
+            if humidity > HUMIDITY_OPTIMAL_HIGH_PCT:
                 humidity_status = "high"
                 issues.append("humidity is high")
-            elif humidity < 40:
+            elif humidity < HUMIDITY_OPTIMAL_LOW_PCT:
                 humidity_status = "low"
                 issues.append("humidity is low")
         
-        if noise and noise > 50:
+        if noise and noise > NOISE_ALERT_HIGH_DB:
             noise_status = "high"
             issues.append("noise level is elevated")
         
@@ -640,8 +674,8 @@ async def get_ai_summary(
         weekly_trend = None
         trend_message = None
     
-    # Generate today's tip based on available data
-    todays_tip = _generate_todays_tip(baby_name, environment, sleep_summary, weekly_trend)
+    # Generate today's tip using AI
+    todays_tip = await _generate_todays_tip(baby_name, environment, sleep_summary, weekly_trend)
     
     # Generate quick insights
     quick_insights = _generate_quick_insights(
@@ -758,50 +792,107 @@ async def get_enhanced_insights(
     )
 
 
-# Used by: get_ai_summary — generates context-aware daily tip based on environment/sleep/trends
-def _generate_todays_tip(
+# Used by: get_ai_summary — generates context-aware daily tip using Gemini AI
+async def _generate_todays_tip(
     baby_name: str,
     environment: EnvironmentStatus,
     sleep_summary: SleepQualitySummary,
     weekly_trend: Optional[str]
 ) -> str:
-    """Generate a contextual tip for today."""
-    
-    # Priority 1: Environment issues
-    if environment.status == "needs_attention":
-        if environment.temperature_status == "high":
-            return f"We noticed the room is a bit warm — {baby_name} might sleep more comfortably if you cool it down to around 18-22°C."
-        elif environment.temperature_status == "low":
-            return f"The room feels a bit cool for {baby_name}. A sleep sack or a small thermostat adjustment could help."
-        elif environment.humidity_status == "low":
-            return f"The air seems a little dry — a humidifier in {baby_name}'s room might make things more comfortable."
-        elif environment.noise_status == "high":
-            return f"We noticed some extra noise in the room. White noise could help mask it for {baby_name}."
+    """Generate a personalized daily tip using Gemini AI."""
+    try:
+        from google import genai
+        from google.genai import types
 
-    # Priority 2: Sleep quality
-    if sleep_summary.last_sleep_quality == "poor":
-        return f"Short naps happen — a calming pre-sleep routine might help {baby_name} ease into deeper sleep."
+        client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
+        if not client:
+            return _fallback_tip(baby_name)
 
-    # Priority 3: Trends
-    if weekly_trend == "declining":
-        return f"Sleep has been a bit uneven lately — that's normal. Sticking to consistent routines can really help {baby_name}."
-    elif weekly_trend == "improving":
-        return f"Nice trend this week! Keeping up the consistent schedule seems to be working well for {baby_name}."
-    
-    # Default tips
-    default_tips = [
-        f"Consistency is key - try to maintain regular nap and bedtimes for {baby_name}.",
-        f"A calm, dark environment signals sleep time to {baby_name}'s brain.",
-        f"Watch for {baby_name}'s sleepy cues: yawning, eye rubbing, or fussiness.",
-        f"Brief awakenings between sleep cycles are normal for babies.",
-    ]
-    
-    # Use time of day to pick a relevant tip
+        # Build context for the prompt
+        context_parts = [f"Baby name: {baby_name}"]
+
+        # Environment context
+        if environment.status == "needs_attention":
+            issues = []
+            if environment.temperature_status == "high":
+                issues.append("room temperature is too high")
+            elif environment.temperature_status == "low":
+                issues.append("room temperature is too low")
+            if environment.humidity_status == "low":
+                issues.append("humidity is low")
+            elif environment.humidity_status == "high":
+                issues.append("humidity is high")
+            if environment.noise_status == "high":
+                issues.append("noise level is elevated")
+            if issues:
+                context_parts.append(f"Room issues: {', '.join(issues)}")
+        else:
+            context_parts.append("Room conditions: optimal")
+
+        # Sleep context
+        if sleep_summary.last_sleep_hours is not None:
+            context_parts.append(f"Last sleep duration: {sleep_summary.last_sleep_hours:.1f} hours")
+        if sleep_summary.trend_direction:
+            context_parts.append(f"Sleep trend direction: {sleep_summary.trend_direction}")
+
+        # Trend context
+        if weekly_trend:
+            context_parts.append(f"Weekly sleep trend: {weekly_trend}")
+
+        # Time of day
+        hour = datetime.now().hour
+        if hour < 12:
+            context_parts.append("Time of day: morning")
+        elif hour < 17:
+            context_parts.append("Time of day: afternoon")
+        else:
+            context_parts.append("Time of day: evening")
+
+        context = "\n".join(context_parts)
+
+        prompt = f"""You are a gentle, supportive pediatric sleep consultant for a baby monitoring app.
+
+Based on the following context, generate ONE short, personalized daily tip for the parent.
+
+{context}
+
+Rules:
+- 1-2 sentences maximum
+- Use the baby's name naturally
+- Be warm and reassuring, never alarming
+- Use soft language: "you might want to", "it could help", "we noticed"
+- If there's a room issue, prioritize that. Otherwise focus on sleep quality or general advice relevant to the time of day.
+- Do NOT use emojis
+- Make it feel personal and specific to the current situation, not generic"""
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model=settings.GEMINI_MODEL_CHAT,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=GEMINI_TIP_TEMPERATURE, max_output_tokens=GEMINI_TIP_MAX_TOKENS)
+            )
+        )
+
+        if response and response.text:
+            tip = response.text.strip().strip('"')
+            if tip:
+                return tip
+
+    except Exception as e:
+        logger.warning(f"Gemini tip generation failed, using fallback: {e}")
+
+    return _fallback_tip(baby_name)
+
+
+def _fallback_tip(baby_name: str) -> str:
+    """Simple fallback tip when AI is unavailable."""
     hour = datetime.now().hour
     if hour < 12:
         return f"Morning naps often set the tone for the day. Watch for {baby_name}'s early tiredness cues."
     elif hour < 17:
-        return default_tips[hour % len(default_tips)]
+        return f"A calm, dark environment signals sleep time to {baby_name}'s brain."
     else:
         return f"A consistent bedtime routine helps {baby_name} wind down and sleep better through the night."
 
@@ -819,7 +910,7 @@ def _generate_quick_insights(
     
     # Sleep insight
     if sleep_summary.last_sleep_hours:
-        if sleep_summary.last_sleep_quality == "good":
+        if sleep_summary.last_sleep_hours is not None and sleep_summary.last_sleep_hours >= 1.5:
             insights.append(f"{baby_name} had a restful {sleep_summary.last_sleep_hours:.1f}h sleep")
         elif sleep_summary.last_sleep_hours < 1:
             insights.append(f"Last nap was brief ({int(sleep_summary.last_sleep_hours * 60)}min) - watch for early tiredness")

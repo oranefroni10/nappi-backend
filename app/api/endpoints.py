@@ -14,6 +14,7 @@ from .models import LastSleepSummary, RoomMetrics
 from ..core.database import get_database
 from ..core.settings import settings
 from ..core.utils import SENSOR_TO_ENDPOINT_MAP, SENSOR_TO_DB_COLUMN_MAP
+from ..core.constants import SENSOR_FETCH_TIMEOUT_SECONDS
 from ..services.babies_data import BabyDataManager
 from ..services.data_miner import HttpSensorSource
 
@@ -174,7 +175,7 @@ async def get_current_room_metrics(
     data_source = HttpSensorSource(
         base_url=settings.SENSOR_API_BASE_URL,
         endpoint_map=SENSOR_TO_ENDPOINT_MAP,
-        timeout_seconds=5,
+        timeout_seconds=SENSOR_FETCH_TIMEOUT_SECONDS,
     )
 
     sensor_names = list(SENSOR_TO_ENDPOINT_MAP.keys())

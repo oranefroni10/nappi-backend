@@ -18,19 +18,15 @@ from statistics import mean, stdev
 
 from .babies_data import BabyDataManager
 from ..core.settings import settings
+from ..core.constants import (
+    AGE_SLEEP_RECOMMENDATIONS, DAYS_PER_MONTH,
+    TREND_IMPROVING_THRESHOLD_PCT, TREND_DECLINING_THRESHOLD_PCT,
+    CONSISTENCY_STD_DEV_MULTIPLIER,
+    GEMINI_TRENDS_TEMPERATURE, GEMINI_TRENDS_MAX_TOKENS,
+)
 from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
-
-# Age-based sleep recommendations (in hours per day)
-AGE_SLEEP_RECOMMENDATIONS = {
-    # (min_months, max_months): (min_hours, max_hours, typical_naps)
-    (0, 3): {"min_hours": 14, "max_hours": 17, "typical_naps": "4-5", "night_hours": "8-9"},
-    (4, 6): {"min_hours": 12, "max_hours": 16, "typical_naps": "3-4", "night_hours": "9-10"},
-    (7, 12): {"min_hours": 12, "max_hours": 15, "typical_naps": "2-3", "night_hours": "10-11"},
-    (13, 24): {"min_hours": 11, "max_hours": 14, "typical_naps": "1-2", "night_hours": "10-12"},
-    (25, 36): {"min_hours": 10, "max_hours": 13, "typical_naps": "0-1", "night_hours": "10-12"},
-}
 
 # Lazy-loaded Gemini client
 _gemini_client = None
@@ -160,28 +156,31 @@ class TrendAnalyzer:
         
         avg_sleep = mean(sleep_hours)
         
-        # Calculate trend (comparing first half to second half)
+        # Trend direction: split the period in half, compare avg sleep hours.
+        # Positive change (>5%) = improving, negative (<-5%) = declining, else stable.
+        # Used in: Statistics trend cards, AI trend prompt context, dashboard weekly trend message.
         mid_point = len(sleep_hours) // 2
         first_half_avg = mean(sleep_hours[:mid_point]) if mid_point > 0 else avg_sleep
         second_half_avg = mean(sleep_hours[mid_point:]) if mid_point < len(sleep_hours) else avg_sleep
-        
+
         trend_diff = second_half_avg - first_half_avg
         trend_percentage = (trend_diff / first_half_avg * 100) if first_half_avg > 0 else 0
-        
-        if trend_percentage > 5:
+
+        if trend_percentage > TREND_IMPROVING_THRESHOLD_PCT:
             sleep_trend = "improving"
-        elif trend_percentage < -5:
+        elif trend_percentage < TREND_DECLINING_THRESHOLD_PCT:
             sleep_trend = "declining"
         else:
             sleep_trend = "stable"
-        
-        # Calculate consistency score (based on standard deviation)
+
+        # Consistency score (0-100): how uniform daily sleep durations are.
+        # Based on std_dev of daily hours — lower variance = higher score.
+        # e.g. std_dev of 1h → score 90, std_dev of 5h → score 50.
+        # Used in: Statistics trend cards display, Gemini trend prompt for AI analysis.
         if len(sleep_hours) >= 2:
             try:
                 std_dev = stdev(sleep_hours)
-                # Lower standard deviation = more consistent
-                # Score: 100 - (std_dev * 10), capped at 0-100
-                consistency_score = max(0, min(100, 100 - (std_dev * 10)))
+                consistency_score = max(0, min(100, 100 - (std_dev * CONSISTENCY_STD_DEV_MULTIPLIER)))
             except:
                 consistency_score = 50.0
         else:
@@ -306,8 +305,8 @@ class TrendAnalyzer:
                     model=settings.GEMINI_MODEL_INSIGHTS,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        temperature=0.3,
-                        max_output_tokens=600,
+                        temperature=GEMINI_TRENDS_TEMPERATURE,
+                        max_output_tokens=GEMINI_TRENDS_MAX_TOKENS,
                     ),
                 )
             )
@@ -490,7 +489,7 @@ async def get_sleep_trends(
     # Calculate age
     today = date.today()
     age_days = (today - baby.birthdate).days
-    age_months = age_days // 30
+    age_months = age_days // DAYS_PER_MONTH
     
     # Get 7-day and 30-day trends
     trend_7d = await analyzer.analyze_trends(baby_id, days=7)
