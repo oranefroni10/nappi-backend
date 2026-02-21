@@ -58,7 +58,6 @@ class Babies(BaseModel):
     last_name: str
     birthdate: date
     gender: Optional[str] = None
-    notes: Optional[str] = None  # Legacy single-field notes on the baby record (brief health info). Detailed notes use the baby_notes table.
     created_at: Optional[datetime] = None
 
     class Config:
@@ -201,15 +200,11 @@ User = Users
 
 # Used by: auth.py (POST /auth/login, POST /auth/signup response)
 class BabyResponse(BaseModel):
-    """
-    Baby info returned in API responses.
-    Includes notes field for parent-provided health information.
-    """
+    """Baby info returned in API responses."""
     id: int
     first_name: str
     last_name: str
     birthdate: date
-    notes: Optional[str] = None
 
     class Config:
         from_attributes = True

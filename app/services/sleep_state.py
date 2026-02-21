@@ -14,11 +14,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+from app.core.constants import INTERVENTION_COOLDOWN_MINUTES
 
 logger = logging.getLogger(__name__)
-
-# Intervention cooldown duration in minutes
-INTERVENTION_COOLDOWN_MINUTES = 20
 
 
 @dataclass

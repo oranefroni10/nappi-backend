@@ -10,10 +10,16 @@ from datetime import datetime, time
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
+from app.core.constants import (
+    SLEEP_PATTERN_GAP_HOURS,
+    PATTERN_MORNING_START, PATTERN_MORNING_END,
+    PATTERN_AFTERNOON_START, PATTERN_AFTERNOON_END,
+)
+
 logger = logging.getLogger(__name__)
 
-# Gap threshold for clustering (hours)
-DEFAULT_GAP_HOURS = 2.0
+# Gap threshold for clustering (hours) — from centralized constants
+DEFAULT_GAP_HOURS = SLEEP_PATTERN_GAP_HOURS
 
 
 @dataclass
@@ -203,9 +209,9 @@ def assign_label(avg_start_hour: float) -> str:
     # Normalize to 0-24 range
     hour = avg_start_hour % 24.0
     
-    if 5.0 <= hour < 11.0:
+    if float(PATTERN_MORNING_START) <= hour < float(PATTERN_MORNING_END):
         return "Morning nap"
-    elif 11.0 <= hour < 17.0:
+    elif float(PATTERN_AFTERNOON_START) <= hour < float(PATTERN_AFTERNOON_END):
         return "Afternoon nap"
     else:
         return "Night sleep"

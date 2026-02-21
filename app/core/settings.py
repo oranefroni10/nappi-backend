@@ -1,6 +1,10 @@
 import os
 from typing import List
 from dotenv import load_dotenv
+from app.core.constants import (
+    CORRELATION_CHANGE_THRESHOLDS as _DEFAULT_CORRELATION_THRESHOLDS,
+    CORRELATION_TIME_WINDOW_MINUTES as _DEFAULT_CORRELATION_WINDOW,
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -35,14 +39,10 @@ class Settings:
     GEMINI_MODEL_CHAT: str = os.getenv("GEMINI_MODEL_CHAT", "models/gemini-2.5-flash")
     GEMINI_MODEL_INSIGHTS: str = os.getenv("GEMINI_MODEL_INSIGHTS", "models/gemini-2.5-flash")
     
-    # Correlation Analysis Configuration — per-sensor thresholds (% change)
-    CORRELATION_CHANGE_THRESHOLDS: dict = {
-        "temp_celcius": 5.0,
-        "humidity": 5.0,
-        "noise_decibel": 100.0,
-    }
+    # Correlation Analysis Configuration — defaults from constants.py, overridable via env
+    CORRELATION_CHANGE_THRESHOLDS: dict = _DEFAULT_CORRELATION_THRESHOLDS
     CORRELATION_TIME_WINDOW_MINUTES: int = int(
-        os.getenv("CORRELATION_TIME_WINDOW_MINUTES", "60")
+        os.getenv("CORRELATION_TIME_WINDOW_MINUTES", str(_DEFAULT_CORRELATION_WINDOW))
     )
     
     # Daily Summary Configuration

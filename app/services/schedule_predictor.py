@@ -16,33 +16,14 @@ from statistics import mean, median
 
 from .babies_data import BabyDataManager
 from .sleep_patterns import analyze_sleep_patterns
+from ..core.constants import (
+    WAKE_WINDOWS, TYPICAL_BEDTIMES, DAYS_PER_MONTH,
+    WAKE_WINDOW_RECENTLY_WOKE_FACTOR, WAKE_WINDOW_APPROACHING_FACTOR,
+    PREDICTION_FALLBACK_APPROACHING_MINUTES, PREDICTION_FALLBACK_OVERDUE_MINUTES,
+    BEDTIME_PREDICTION_AGE_THRESHOLD_MONTHS, FALLBACK_NAP_TIMES,
+)
 
 logger = logging.getLogger(__name__)
-
-# Age-based wake window recommendations (in hours)
-# See README.md "Sleep Guidelines Sources" section for full source citations
-WAKE_WINDOWS = {
-    # (min_months, max_months): (min_wake_hours, max_wake_hours)
-    (0, 1): (0.5, 1.0),  # 30-60 min
-    (2, 3): (1.0, 2.0),  # 1-2 hours
-    (4, 5): (1.25, 2.5),  # 1.25-2.5 hours
-    (6, 7): (2.0, 4.0),  # 2-4 hours
-    (8, 9): (2.5, 4.5),  # 2.5-4.5 hours
-    (10, 12): (3.0, 4.0),  # 3-4 hours
-    (13, 18): (3.0, 5.5),  # 3-5.5 hours
-    (19, 24): (4.0, 6.0),  # 4-6 hours
-    (25, 36): (5.0, 6.0),  # 5-6 hours
-}
-
-# Typical bedtimes by age
-# fallback data based on online research
-TYPICAL_BEDTIMES = {
-    (0, 3): (20, 0, 23, 0),  # 8:00 PM - 11:00 PM (newborns: no circadian rhythm yet)
-    (4, 6): (19, 0, 20, 30),  # 7:00 PM - 8:30 PM (circadian rhythm maturing)
-    (7, 12): (18, 30, 20, 0),  # 6:30 PM - 8:00 PM (earliest bedtimes of infancy)
-    (13, 24): (19, 0, 20, 0),  # 7:00 PM - 8:00 PM
-    (25, 36): (19, 0, 20, 30),  # 7:00 PM - 8:30 PM
-}
 
 
 # Used by: SchedulePredictor.predict_next_sleep() (wake window lookup)
@@ -123,7 +104,7 @@ class SchedulePredictor:
         # Calculate age in months
         today = current_time.date()
         age_days = (today - baby.birthdate).days
-        age_months = age_days // 30
+        age_months = age_days // DAYS_PER_MONTH
 
         # Get wake window for this age
         wake_window = get_wake_window(age_months)
@@ -219,13 +200,13 @@ class SchedulePredictor:
             wake_hours = wake_duration.total_seconds() / 3600.0
 
             # Determine wake window status
-            if wake_hours < min_wake * 0.8:
+            if wake_hours < min_wake * WAKE_WINDOW_RECENTLY_WOKE_FACTOR:
                 wake_status = "recently_woke"
             elif wake_hours < min_wake:
                 wake_status = "not_yet"
             elif wake_hours <= max_wake:
                 wake_status = "optimal"
-            elif wake_hours <= max_wake * 1.2:
+            elif wake_hours <= max_wake * WAKE_WINDOW_APPROACHING_FACTOR:
                 wake_status = "approaching"
             else:
                 wake_status = "overdue"
@@ -234,11 +215,11 @@ class SchedulePredictor:
             if wake_status in ["optimal", "approaching", "overdue"]:
                 # Baby should sleep soon
                 if wake_status == "overdue":
-                    predicted_start = current_time + timedelta(minutes=15)
+                    predicted_start = current_time + timedelta(minutes=PREDICTION_FALLBACK_APPROACHING_MINUTES)
                     confidence = "high"
                     based_on = "Wake window exceeded - sleep signs likely"
                 elif wake_status == "approaching":
-                    predicted_start = current_time + timedelta(minutes=30)
+                    predicted_start = current_time + timedelta(minutes=PREDICTION_FALLBACK_OVERDUE_MINUTES)
                     confidence = "high"
                     based_on = f"Approaching {max_wake:.1f}h wake window limit"
                 else:
@@ -304,24 +285,21 @@ class SchedulePredictor:
         """Generate fallback prediction based on time of day and age."""
         hour = current_time.hour
 
-        # Morning (6-11): Suggest late morning nap
-        if 6 <= hour < 11:
-            return current_time.replace(hour=10, minute=30, second=0, microsecond=0)
+        # Use FALLBACK_NAP_TIMES: each entry is (before_hour, predict_hour, predict_minute)
+        for before_hour, predict_hour, predict_minute in FALLBACK_NAP_TIMES:
+            if hour < before_hour:
+                return current_time.replace(hour=predict_hour, minute=predict_minute, second=0, microsecond=0)
 
-        # Late morning (11-14): Suggest afternoon nap
-        elif 11 <= hour < 14:
-            return current_time.replace(hour=13, minute=30, second=0, microsecond=0)
-
-        # Afternoon (14-17): Suggest late afternoon nap or early bedtime
-        elif 14 <= hour < 17:
-            if age_months < 12:
+        # Afternoon: Suggest late afternoon nap or early bedtime
+        if hour < 17:
+            if age_months < BEDTIME_PREDICTION_AGE_THRESHOLD_MONTHS:
                 return current_time.replace(hour=16, minute=0, second=0, microsecond=0)
             else:
                 return current_time.replace(hour=18, minute=30, second=0, microsecond=0)
 
         # Evening (17+): Suggest bedtime
         else:
-            bedtime_hour = 19 if age_months < 12 else 20
+            bedtime_hour = 19 if age_months < BEDTIME_PREDICTION_AGE_THRESHOLD_MONTHS else 20
             target = current_time.replace(hour=bedtime_hour, minute=0, second=0, microsecond=0)
             if target <= current_time:
                 target = target + timedelta(days=1)
@@ -375,7 +353,7 @@ class SchedulePredictor:
         if wake_duration:
             wake_hours = wake_duration.total_seconds() / 3600.0
 
-            if wake_hours > max_wake * 1.2:
+            if wake_hours > max_wake * WAKE_WINDOW_APPROACHING_FACTOR:
                 suggestions.append(f"{baby_name} may be overtired - watch for fussy cues and consider an early nap")
             elif wake_hours > max_wake:
                 suggestions.append(f"Approaching overtired territory - start wind-down routine now")
