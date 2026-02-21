@@ -24,6 +24,7 @@ class Settings:
         "http://127.0.0.1:5173",
         "http://localhost:3000",
     ]
+    CORS_EXTRA_ORIGINS: str = os.getenv("CORS_EXTRA_ORIGINS", "")
     
     # Logging Configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
