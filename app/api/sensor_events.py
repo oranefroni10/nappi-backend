@@ -19,8 +19,6 @@ from .models import (
     SleepStartResponse,
     AwakeningEventResponse,
     LastSensorReadings,
-    BulkSensorRequest,
-    BulkSensorResponse,
 )
 from ..services.sleep_state import get_sleep_state_manager, INTERVENTION_COOLDOWN_MINUTES
 from ..services.babies_data import BabyDataManager
@@ -306,34 +304,6 @@ async def baby_away(request: SleepEventRequest):
         "tracking_duration_minutes": round(tracking_duration, 2),
         "message": f"Sleep tracking stopped for baby {baby_id} (baby away from sensor)"
     }
-
-
-# ============================================
-# Bulk Sensor Data (M5 offline buffer sync)
-# ============================================
-
-# Used by: M5 sensor — sends buffered readings after WiFi reconnect to fill data gaps
-@router.post("/bulk-readings", response_model=BulkSensorResponse)
-async def bulk_readings(request: BulkSensorRequest):
-    """
-    Accept batch of buffered sensor readings from M5 device.
-
-    Called after WiFi reconnection to backfill data that was collected
-    while the device was offline. Each reading has a device-provided
-    timestamp so the data slots into the correct time position.
-    """
-    if not request.readings:
-        return BulkSensorResponse(inserted=0, message="No readings provided")
-
-    logger.info(f"Received {len(request.readings)} buffered readings from M5")
-
-    baby_manager = BabyDataManager()
-    inserted = await baby_manager.insert_bulk_sleep_realtime_data(request.readings)
-
-    return BulkSensorResponse(
-        inserted=inserted,
-        message=f"Inserted {inserted} offline readings"
-    )
 
 
 # ============================================

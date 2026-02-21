@@ -63,37 +63,6 @@ class BabyDataManager:
             logger.error(f"Failed to insert sleep data for baby {baby_id}: {e}")
             return None
 
-    # Used by: sensor_events.py (bulk-readings endpoint - offline buffer sync from M5)
-    async def insert_bulk_sleep_realtime_data(
-            self,
-            readings: list,
-    ) -> int:
-        """Insert multiple buffered sensor readings with device-provided timestamps."""
-        inserted = 0
-        try:
-            async with self.database.session() as session:
-                for r in readings:
-                    await session.execute(
-                        text('''
-                            INSERT INTO "Nappi"."sleep_realtime_data"
-                            (baby_id, datetime, humidity, temp_celcius, noise_decibel)
-                            VALUES (:baby_id, :datetime, :humidity, :temp_celcius, :noise_decibel)
-                        '''),
-                        {
-                            "baby_id": r.baby_id,
-                            "datetime": r.datetime,
-                            "humidity": r.humidity,
-                            "temp_celcius": r.temp_celcius,
-                            "noise_decibel": r.noise_decibel,
-                        }
-                    )
-                    inserted += 1
-                await session.commit()
-            logger.info(f"Bulk inserted {inserted} offline sensor readings")
-        except Exception as e:
-            logger.error(f"Failed to bulk insert sensor data: {e}")
-        return inserted
-
     # Used by: sensor_events.py (sleep-end endpoint - records awakening)
     async def set_baby_awaking_event(
             self,

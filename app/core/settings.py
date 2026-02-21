@@ -15,7 +15,7 @@ class Settings:
     DATABASE_URL: str = os.getenv("DB_CONNECTION_STRING")
     
     # Sensor API Configuration
-    SENSOR_API_BASE_URL: str = os.getenv("SENSOR_API_BASE_URL", "http://192.168.117.254:8000")
+    SENSOR_API_BASE_URL: str = os.getenv("SENSOR_API_BASE_URL", "http://192.168.117.254:8001")
     SENSOR_POLL_INTERVAL_SECONDS: int = int(os.getenv("SENSOR_POLL_INTERVAL_SECONDS", "5"))
     
     # CORS Configuration

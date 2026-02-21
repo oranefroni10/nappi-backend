@@ -58,28 +58,6 @@ class AwakeningEventResponse(BaseModel):
 
 
 # ============================================
-# Bulk Sensor Data (M5 offline buffer sync)
-# ============================================
-
-class BulkSensorReading(BaseModel):
-    """Single buffered sensor reading from M5 offline mode."""
-    baby_id: int
-    datetime: str  # ISO format timestamp from device
-    temp_celcius: Optional[float] = None
-    humidity: Optional[float] = None
-    noise_decibel: Optional[float] = None
-
-class BulkSensorRequest(BaseModel):
-    """Batch of buffered sensor readings sent after WiFi reconnect."""
-    readings: List[BulkSensorReading]
-
-class BulkSensorResponse(BaseModel):
-    """Response for bulk sensor insert."""
-    inserted: int
-    message: str
-
-
-# ============================================
 # Statistics Models
 # ============================================
 
