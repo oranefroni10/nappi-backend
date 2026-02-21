@@ -108,6 +108,7 @@ class DailySleepPoint(BaseModel):
     date: date
     total_hours: float
     sessions_count: int
+    awakenings_count: int
 
 
 class DailySleepResponse(BaseModel):
@@ -251,7 +252,6 @@ class EnvironmentStatus(BaseModel):
 class SleepQualitySummary(BaseModel):
     """Summary of recent sleep quality."""
     last_sleep_hours: Optional[float] = None
-    last_sleep_quality: Optional[str] = None  # "good", "fair", "poor"
     trend_direction: Optional[str] = None  # "improving", "stable", "declining"
     message: str
 

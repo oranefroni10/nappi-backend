@@ -17,6 +17,10 @@ import pytz
 
 from .babies_data import BabyDataManager
 from ..core.settings import settings
+from ..core.constants import (
+    DAILY_SUMMARY_MORNING_START, DAILY_SUMMARY_MORNING_END,
+    DAILY_SUMMARY_NOON_START, DAILY_SUMMARY_NOON_END,
+)
 from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
@@ -24,11 +28,11 @@ logger = logging.getLogger(__name__)
 # Israel timezone
 ISRAEL_TZ = pytz.timezone("Asia/Jerusalem")
 
-# Time period boundaries (in local time)
-MORNING_START = 6   # 6 AM
-MORNING_END = 12    # 12 PM
-NOON_START = 12     # 12 PM
-NOON_END = 18       # 6 PM
+# Time period boundaries (in local time) — from centralized constants
+MORNING_START = DAILY_SUMMARY_MORNING_START
+MORNING_END = DAILY_SUMMARY_MORNING_END
+NOON_START = DAILY_SUMMARY_NOON_START
+NOON_END = DAILY_SUMMARY_NOON_END
 # Night is 6 PM to 6 AM (spans two calendar days)
 
 

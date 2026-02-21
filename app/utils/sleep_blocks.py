@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
+from app.core.constants import SLEEP_BLOCK_GAP_THRESHOLD_MINUTES
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_GAP_THRESHOLD_MINUTES = 30
+DEFAULT_GAP_THRESHOLD_MINUTES = SLEEP_BLOCK_GAP_THRESHOLD_MINUTES
 
 
 # Used by: group_into_sleep_blocks() return type; consumed by stats.py, chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py

@@ -20,16 +20,21 @@ from typing import Dict, List, Any, Optional
 from .babies_data import BabyDataManager
 from .sleep_patterns import analyze_sleep_patterns
 from ..core.settings import settings
+from ..core.constants import (
+    CHAT_MAX_NOTES_CHARS, CHAT_MAX_HISTORY_MESSAGES,
+    CHAT_MAX_AWAKENINGS, CHAT_MAX_CORRELATIONS, CHAT_MAX_SUMMARY_DAYS,
+    DAYS_PER_MONTH, GEMINI_CHAT_TEMPERATURE, GEMINI_CHAT_MAX_TOKENS, GEMINI_CHAT_TOP_P,
+)
 from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
-# Token size limits to prevent prompt blow-ups
-MAX_NOTES_CHARS = 1000
-MAX_CHAT_HISTORY = 10
-MAX_AWAKENINGS = 5
-MAX_CORRELATIONS = 5
-MAX_SUMMARY_DAYS = 7
+# Token size limits — from centralized constants
+MAX_NOTES_CHARS = CHAT_MAX_NOTES_CHARS
+MAX_CHAT_HISTORY = CHAT_MAX_HISTORY_MESSAGES
+MAX_AWAKENINGS = CHAT_MAX_AWAKENINGS
+MAX_CORRELATIONS = CHAT_MAX_CORRELATIONS
+MAX_SUMMARY_DAYS = CHAT_MAX_SUMMARY_DAYS
 
 # Lazy-loaded Gemini client (shared with correlation_analyzer)
 _gemini_client = None
@@ -125,7 +130,7 @@ class ChatService:
         
         today = date.today()
         age_days = (today - baby.birthdate).days
-        age_months = age_days // 30
+        age_months = age_days // DAYS_PER_MONTH
         
         if age_months < 1:
             return f"{age_days} days old"
@@ -422,9 +427,9 @@ RESPONSE GUIDELINES:
                     model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        temperature=0.7,  # Slightly more creative for chat
-                        max_output_tokens=4096,  # Increased significantly to prevent truncation
-                        top_p=0.9,
+                        temperature=GEMINI_CHAT_TEMPERATURE,
+                        max_output_tokens=GEMINI_CHAT_MAX_TOKENS,
+                        top_p=GEMINI_CHAT_TOP_P,
                     ),
                 )
             )

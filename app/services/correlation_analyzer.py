@@ -17,19 +17,21 @@ from dataclasses import dataclass
 
 from .babies_data import BabyDataManager
 from ..core.settings import settings
+from ..core.constants import (
+    HEALTHY_RANGES, CORRELATION_MAX_NOTES_CHARS, DAYS_PER_MONTH,
+    GEMINI_INSIGHTS_TEMPERATURE, GEMINI_INSIGHTS_MAX_TOKENS, GEMINI_INSIGHTS_TOP_P,
+    GEMINI_QUICK_INSIGHT_TEMPERATURE, GEMINI_QUICK_INSIGHT_MAX_TOKENS,
+    AI_MORNING_START, AI_MORNING_END, AI_AFTERNOON_END, AI_EVENING_END,
+    CORRELATION_QUARTILE_FRACTION,
+    TEMP_OPTIMAL_HIGH_C, TEMP_OPTIMAL_LOW_C,
+    NOISE_ALERT_HIGH_DB, HUMIDITY_OPTIMAL_HIGH_PCT, HUMIDITY_OPTIMAL_LOW_PCT,
+)
 from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
 # Sensor parameters to analyze
 SENSOR_PARAMS = ["temp_celcius", "humidity", "noise_decibel"]
-
-# Healthy ranges for baby sleep environment
-HEALTHY_RANGES = {
-    "temp_celcius": {"min": 18.0, "max": 22.0, "unit": "°C", "name": "Room temperature"},
-    "humidity": {"min": 40.0, "max": 60.0, "unit": "%", "name": "Humidity"},
-    "noise_decibel": {"min": 0.0, "max": 50.0, "unit": "dB", "name": "Noise level"},
-}
 
 # Lazy-loaded Gemini client
 _gemini_client = None
@@ -102,7 +104,7 @@ class StructuredInsight:
     actionable_tips: List[str]
     environment_assessment: str
     age_context: str
-    sleep_quality_note: str
+    sleep_quality_note: str  # AI-generated per-awakening note, not the removed sleep_quality_score metric
     raw_text: str  # Original full response for backwards compatibility
 
 
@@ -161,7 +163,7 @@ class CorrelationAnalyzer:
             # Calculate age in months
             today = awakened_at.date()
             age_days = (today - baby.birthdate).days
-            age_months = age_days // 30
+            age_months = age_days // DAYS_PER_MONTH
             
             # Get optimal stats for this baby
             optimal_stats = await self._get_optimal_stats(baby_id)
@@ -179,8 +181,8 @@ class CorrelationAnalyzer:
             
             # Get parent notes (allergies, conditions, health info)
             notes = await self.baby_manager.get_baby_notes(baby_id)
-            # Truncate notes for prompt size (max 1000 chars)
-            truncated_notes = notes[:1000] if notes else None
+            # Truncate notes for prompt size
+            truncated_notes = notes[:CORRELATION_MAX_NOTES_CHARS] if notes else None
             
             return BabyContext(
                 name=baby.first_name,
@@ -302,7 +304,6 @@ class CorrelationAnalyzer:
                 awakened_at=awakened_at,
                 sleep_duration_minutes=sleep_duration_minutes,
                 parameter_changes=significant_changes,
-                all_changes=parameter_changes,
                 baby_context=baby_context
             )
 
@@ -358,7 +359,7 @@ class CorrelationAnalyzer:
         changes = []
         
         # Calculate window sizes (at least 1 reading each)
-        quarter_size = max(1, len(sensor_data) // 4)
+        quarter_size = max(1, int(len(sensor_data) * CORRELATION_QUARTILE_FRACTION))
         start_readings = sensor_data[:quarter_size]
         end_readings = sensor_data[-quarter_size:]
 
@@ -434,7 +435,6 @@ class CorrelationAnalyzer:
         awakened_at: datetime,
         sleep_duration_minutes: float,
         parameter_changes: List[ParameterChange],
-        all_changes: List[ParameterChange],
         baby_context: Optional[BabyContext]
     ) -> Optional[str]:
         """
@@ -452,7 +452,6 @@ class CorrelationAnalyzer:
             awakened_at=awakened_at,
             sleep_duration_minutes=sleep_duration_minutes,
             significant_changes=parameter_changes,
-            all_changes=all_changes,
             baby_context=baby_context
         )
 
@@ -462,9 +461,9 @@ class CorrelationAnalyzer:
         # Generation config for consistent, concise responses
         from google.genai import types
         generation_config = types.GenerateContentConfig(
-            temperature=0.0,
-            max_output_tokens=2048,  # Increased significantly to prevent truncation
-            top_p=0.9,
+            temperature=GEMINI_INSIGHTS_TEMPERATURE,
+            max_output_tokens=GEMINI_INSIGHTS_MAX_TOKENS,
+            top_p=GEMINI_INSIGHTS_TOP_P,
         )
         
         loop = asyncio.get_event_loop()
@@ -502,18 +501,17 @@ class CorrelationAnalyzer:
         awakened_at: datetime,
         sleep_duration_minutes: float,
         significant_changes: List[ParameterChange],
-        all_changes: List[ParameterChange],
         baby_context: Optional[BabyContext]
     ) -> str:
         """Build an enriched prompt for Gemini API with full context."""
         
         # Format time of day
         hour = awakened_at.hour
-        if 5 <= hour < 12:
+        if AI_MORNING_START <= hour < AI_MORNING_END:
             time_of_day = "morning"
-        elif 12 <= hour < 17:
+        elif AI_MORNING_END <= hour < AI_AFTERNOON_END:
             time_of_day = "afternoon"
-        elif 17 <= hour < 21:
+        elif AI_AFTERNOON_END <= hour < AI_EVENING_END:
             time_of_day = "evening"
         else:
             time_of_day = "night"
@@ -595,7 +593,7 @@ Baby Information:
                 )
             changes_text = "\nEnvironmental Changes We Noticed (in the hour before awakening):\n" + "\n".join(changes_lines)
         else:
-            changes_text = "\nEnvironmental Changes: Nothing notable detected (all changes under 10%)"
+            changes_text = "\nEnvironmental Changes: Nothing notable detected (within normal variation)"
 
         # Build sleep duration context
         sleep_hours = sleep_duration_minutes / 60
@@ -629,7 +627,7 @@ Baby Information:
 {baby_info}{current_values_text}{optimal_comparison}{changes_text}
 
 === HEALTHY REFERENCE RANGES ===
-- Room temperature: 18-22°C (babies sleep best in slightly cool rooms)
+- Room temperature: {TEMP_OPTIMAL_LOW_C}-{TEMP_OPTIMAL_HIGH_C}°C (babies sleep best in slightly cool rooms)
 - Humidity: 40-60% (prevents dry airways and skin)
 - Noise: under 50dB (quiet environment, though white noise up to 50dB can help)
 
@@ -658,18 +656,17 @@ Respond in a conversational tone as if chatting with a friend who happens to be 
         awakened_at: datetime,
         sleep_duration_minutes: float,
         significant_changes: List[ParameterChange],
-        all_changes: List[ParameterChange],
         baby_context: Optional[BabyContext]
     ) -> str:
         """Build an enhanced prompt that generates structured multi-section responses."""
         
         # Format time of day
         hour = awakened_at.hour
-        if 5 <= hour < 12:
+        if AI_MORNING_START <= hour < AI_MORNING_END:
             time_of_day = "morning"
-        elif 12 <= hour < 17:
+        elif AI_MORNING_END <= hour < AI_AFTERNOON_END:
             time_of_day = "afternoon"
-        elif 17 <= hour < 21:
+        elif AI_AFTERNOON_END <= hour < AI_EVENING_END:
             time_of_day = "evening"
         else:
             time_of_day = "night"
@@ -747,7 +744,7 @@ ENVIRONMENT: (1 sentence assessment of current room conditions - are they optima
 
 AGE_CONTEXT: (1 sentence about how this sleep pattern relates to typical babies this age)
 
-SLEEP_QUALITY: (1 sentence about the quality/duration of this sleep session)
+SLEEP_QUALITY: (1 sentence about the quality/duration of this sleep session — this is an AI-generated note per awakening, not the removed sleep_quality_score metric)
 
 Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders. Avoid dramatic language — keep observations calm and matter-of-fact."""
 
@@ -869,7 +866,6 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
                 awakened_at=awakened_at,
                 sleep_duration_minutes=sleep_duration_minutes,
                 parameter_changes=significant_changes,
-                all_changes=parameter_changes,
                 baby_context=baby_context
             )
 
@@ -920,7 +916,6 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
         awakened_at: datetime,
         sleep_duration_minutes: float,
         parameter_changes: List[ParameterChange],
-        all_changes: List[ParameterChange],
         baby_context: Optional[BabyContext]
     ) -> Optional[StructuredInsight]:
         """Generate structured multi-section AI insights."""
@@ -934,7 +929,6 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
             awakened_at=awakened_at,
             sleep_duration_minutes=sleep_duration_minutes,
             significant_changes=parameter_changes,
-            all_changes=all_changes,
             baby_context=baby_context
         )
 
@@ -950,8 +944,8 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
                     model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=2048,  # Increased significantly to prevent truncation
+                        temperature=GEMINI_INSIGHTS_TEMPERATURE,
+                        max_output_tokens=GEMINI_INSIGHTS_MAX_TOKENS,
                     ),
                 )
             )
@@ -1029,11 +1023,11 @@ async def generate_quick_insight(
     
     # Format time
     hour = awakened_at.hour
-    if 5 <= hour < 12:
+    if AI_MORNING_START <= hour < AI_MORNING_END:
         time_of_day = "morning"
-    elif 12 <= hour < 17:
+    elif AI_MORNING_END <= hour < AI_AFTERNOON_END:
         time_of_day = "afternoon"
-    elif 17 <= hour < 21:
+    elif AI_AFTERNOON_END <= hour < AI_EVENING_END:
         time_of_day = "evening"
     else:
         time_of_day = "night"
@@ -1046,15 +1040,15 @@ async def generate_quick_insight(
         parts = []
         if last_sensor_readings.get("temp_celcius"):
             temp = last_sensor_readings["temp_celcius"]
-            status = "warm" if temp > 22 else ("cool" if temp < 18 else "normal")
+            status = "warm" if temp > TEMP_OPTIMAL_HIGH_C else ("cool" if temp < TEMP_OPTIMAL_LOW_C else "normal")
             parts.append(f"room {status} ({temp}°C)")
         if last_sensor_readings.get("noise_decibel"):
             noise = last_sensor_readings["noise_decibel"]
-            status = "noisy" if noise > 50 else "quiet"
+            status = "noisy" if noise > NOISE_ALERT_HIGH_DB else "quiet"
             parts.append(f"{status} ({noise}dB)")
         if last_sensor_readings.get("humidity"):
             hum = last_sensor_readings["humidity"]
-            status = "humid" if hum > 60 else ("dry" if hum < 40 else "normal humidity")
+            status = "humid" if hum > HUMIDITY_OPTIMAL_HIGH_PCT else ("dry" if hum < HUMIDITY_OPTIMAL_LOW_PCT else "normal humidity")
             parts.append(f"{status} ({hum}%)")
         if parts:
             sensor_info = f"Room conditions: {', '.join(parts)}."
@@ -1077,8 +1071,8 @@ In exactly 1-2 short sentences, explain the most likely reason for waking and on
                 model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=512,  # Increased to prevent truncation
+                    temperature=GEMINI_QUICK_INSIGHT_TEMPERATURE,
+                    max_output_tokens=GEMINI_QUICK_INSIGHT_MAX_TOKENS,
                 ),
             )
         )

@@ -17,6 +17,12 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 
 from app.core.database import get_database
+from app.core.constants import (
+    ALERT_COOLDOWN_MINUTES, ALERTS_DEFAULT_PAGE_SIZE,
+    TEMP_ALERT_HIGH_C, TEMP_ALERT_LOW_C,
+    HUMIDITY_ALERT_HIGH_PCT, HUMIDITY_ALERT_LOW_PCT,
+    NOISE_ALERT_HIGH_DB,
+)
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -55,15 +61,12 @@ class Alert:
         return data
 
 
-# Alert cooldown (prevents repeated alerts for same condition)
-ALERT_COOLDOWN_MINUTES = 5
-
-# Alert thresholds
-TEMP_HIGH = 26.0  # °C
-TEMP_LOW = 18.0   # °C
-HUMIDITY_HIGH = 60.0  # %
-HUMIDITY_LOW = 30.0   # %
-NOISE_HIGH = 50.0  # dB (Hugh et al. 2014 — 50 dBA nursery limit)
+# Alert thresholds — imported from centralized constants
+TEMP_HIGH = TEMP_ALERT_HIGH_C
+TEMP_LOW = TEMP_ALERT_LOW_C
+HUMIDITY_HIGH = HUMIDITY_ALERT_HIGH_PCT
+HUMIDITY_LOW = HUMIDITY_ALERT_LOW_PCT
+NOISE_HIGH = NOISE_ALERT_HIGH_DB
 
 
 class SSEManager:
@@ -256,7 +259,7 @@ class AlertService:
     async def get_alerts_for_user(
         self,
         user_id: int,
-        limit: int = 50,
+        limit: int = ALERTS_DEFAULT_PAGE_SIZE,
         offset: int = 0,
         unread_only: bool = False
     ) -> List[Alert]:
