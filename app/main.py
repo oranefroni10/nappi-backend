@@ -45,9 +45,18 @@ cors_origins = settings.CORS_ORIGINS.copy()
 if settings.CORS_EXTRA_ORIGINS:
     cors_origins.extend([o.strip() for o in settings.CORS_EXTRA_ORIGINS.split(",") if o.strip()])
 
+def allow_origin(origin: str) -> bool:
+    """Check if origin is allowed — includes all Vercel preview URLs."""
+    if origin in cors_origins:
+        return True
+    if origin.endswith(".vercel.app"):
+        return True
+    return False
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
