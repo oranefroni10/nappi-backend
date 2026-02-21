@@ -42,6 +42,7 @@ from ..services.sleep_patterns import analyze_sleep_patterns
 from ..services.correlation_analyzer import CorrelationAnalyzer
 from ..services.trend_analyzer import get_sleep_trends, get_age_recommendation
 from ..services.schedule_predictor import get_schedule_prediction
+from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ MIN_DAYS = 7
 MAX_DAYS = 90  # 3 months
 
 
+# Used by: get_sensor_stats, get_daily_sleep — validates date range bounds (7-90 days)
 def validate_date_range(start_date: date, end_date: date) -> None:
     """Validate date range is within allowed bounds."""
     if end_date < start_date:
@@ -75,6 +77,7 @@ def validate_date_range(start_date: date, end_date: date) -> None:
         )
 
 
+# Used by: All stats endpoints — validates baby exists before querying data
 async def validate_baby_exists(baby_id: int) -> None:
     """Validate that the baby exists in the database."""
     baby_manager = BabyDataManager()
@@ -87,6 +90,7 @@ async def validate_baby_exists(baby_id: int) -> None:
         )
 
 
+# Used by: Statistics page — sensor averages line chart (temperature/humidity/noise over time)
 @router.get("/sensors", response_model=SensorStatsResponse)
 async def get_sensor_stats(
     baby_id: int = Query(..., description="Baby ID"),
@@ -144,6 +148,7 @@ async def get_sensor_stats(
     )
 
 
+# Used by: Statistics page — sleep pattern clusters chart (typical sleep windows per month)
 @router.get("/sleep-patterns", response_model=SleepPatternsResponse)
 async def get_sleep_patterns(
     baby_id: int = Query(..., description="Baby ID"),
@@ -207,6 +212,7 @@ async def get_sleep_patterns(
     )
 
 
+# Used by: Statistics page — daily sleep totals bar chart (hours per day + session count)
 @router.get("/daily-sleep", response_model=DailySleepResponse)
 async def get_daily_sleep(
     baby_id: int = Query(..., description="Baby ID"),
@@ -231,16 +237,20 @@ async def get_daily_sleep(
         end_date=end_date
     )
     
-    # Aggregate by date
+    # Aggregate raw duration by date (backward compatible)
     daily_data = defaultdict(lambda: {"total_minutes": 0.0, "sessions": 0})
-    
+
     for session in sessions:
         session_date = session.get("session_date")
         duration = session.get("duration_minutes") or 0.0
-        
         if session_date:
             daily_data[session_date]["total_minutes"] += duration
-            daily_data[session_date]["sessions"] += 1
+
+    # Count sleep blocks per date (grouped, not raw events)
+    blocks = group_into_sleep_blocks(sessions, source="sessions_for_range")
+    for block in blocks:
+        block_date = block.block_end.date()
+        daily_data[block_date]["sessions"] += 1
     
     # Build response data points
     data_points = []
@@ -264,6 +274,7 @@ async def get_daily_sleep(
     )
 
 
+# Used by: Statistics page — AI-powered awakening correlation insights (Gemini)
 @router.get("/insights")
 async def get_sleep_insights(
     baby_id: int = Query(..., description="Baby ID"),
@@ -345,6 +356,7 @@ async def get_sleep_insights(
     }
 
 
+# Used by: Home Dashboard — optimal sleep conditions card (best temp/humidity/noise)
 @router.get("/optimal", response_model=OptimalStatsResponse)
 async def get_optimal_stats(
     baby_id: int = Query(..., description="Baby ID")
@@ -392,6 +404,7 @@ async def get_optimal_stats(
     )
 
 
+# Used by: Statistics page — weekly/monthly sleep trend analysis with AI insights
 @router.get("/trends", response_model=TrendsResponse)
 async def get_trends(
     baby_id: int = Query(..., description="Baby ID")
@@ -435,6 +448,7 @@ async def get_trends(
     return response
 
 
+# Used by: Home Dashboard — next sleep prediction card (wake windows + bedtime suggestion)
 @router.get("/schedule-prediction", response_model=SchedulePredictionResponse)
 async def get_schedule_prediction_endpoint(
     baby_id: int = Query(..., description="Baby ID")
@@ -484,6 +498,7 @@ async def get_schedule_prediction_endpoint(
     return response
 
 
+# Used by: Home Dashboard — combined AI summary (sleep quality, environment, tips, trends)
 @router.get("/ai-summary", response_model=AISummaryResponse)
 async def get_ai_summary(
     baby_id: int = Query(..., description="Baby ID")
@@ -652,6 +667,7 @@ async def get_ai_summary(
     )
 
 
+# Used by: Statistics page — enhanced multi-section AI insights (cause, tips, environment, age context)
 @router.get("/insights-enhanced", response_model=EnhancedInsightsResponse)
 async def get_enhanced_insights(
     baby_id: int = Query(..., description="Baby ID"),
@@ -742,6 +758,7 @@ async def get_enhanced_insights(
     )
 
 
+# Used by: get_ai_summary — generates context-aware daily tip based on environment/sleep/trends
 def _generate_todays_tip(
     baby_name: str,
     environment: EnvironmentStatus,
@@ -753,23 +770,23 @@ def _generate_todays_tip(
     # Priority 1: Environment issues
     if environment.status == "needs_attention":
         if environment.temperature_status == "high":
-            return f"Consider lowering the room temperature for {baby_name}'s next sleep - babies sleep best in slightly cool rooms (18-22°C)."
+            return f"We noticed the room is a bit warm — {baby_name} might sleep more comfortably if you cool it down to around 18-22°C."
         elif environment.temperature_status == "low":
-            return f"The room might be a bit cool for {baby_name}. Try a sleep sack or adjusting the thermostat."
+            return f"The room feels a bit cool for {baby_name}. A sleep sack or a small thermostat adjustment could help."
         elif environment.humidity_status == "low":
-            return f"Low humidity can cause dry airways. Consider using a humidifier in {baby_name}'s room."
+            return f"The air seems a little dry — a humidifier in {baby_name}'s room might make things more comfortable."
         elif environment.noise_status == "high":
-            return f"Noise levels are elevated. White noise can help mask disruptive sounds for {baby_name}."
-    
+            return f"We noticed some extra noise in the room. White noise could help mask it for {baby_name}."
+
     # Priority 2: Sleep quality
     if sleep_summary.last_sleep_quality == "poor":
-        return f"Short naps are common! Try a calming pre-sleep routine to help {baby_name} settle into deeper sleep."
-    
+        return f"Short naps happen — a calming pre-sleep routine might help {baby_name} ease into deeper sleep."
+
     # Priority 3: Trends
     if weekly_trend == "declining":
-        return f"Sleep has been challenging lately. Remember, sleep patterns change - focus on consistent routines for {baby_name}."
+        return f"Sleep has been a bit uneven lately — that's normal. Sticking to consistent routines can really help {baby_name}."
     elif weekly_trend == "improving":
-        return f"Great progress this week! Keep up the consistent sleep schedule for {baby_name}."
+        return f"Nice trend this week! Keeping up the consistent schedule seems to be working well for {baby_name}."
     
     # Default tips
     default_tips = [
@@ -789,6 +806,7 @@ def _generate_todays_tip(
         return f"A consistent bedtime routine helps {baby_name} wind down and sleep better through the night."
 
 
+# Used by: get_ai_summary — generates list of short insight strings for dashboard display
 def _generate_quick_insights(
     baby_name: str,
     sleep_summary: SleepQualitySummary,
@@ -816,7 +834,7 @@ def _generate_quick_insights(
     if weekly_trend == "improving":
         insights.append("Sleep quality trending upward this week")
     elif weekly_trend == "declining":
-        insights.append("Sleep has been variable - consider schedule adjustments")
+        insights.append("Sleep has been a bit variable — small schedule tweaks might help")
     elif weekly_trend == "stable":
         insights.append("Sleep patterns are consistent")
     

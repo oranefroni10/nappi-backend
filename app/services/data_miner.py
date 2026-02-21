@@ -5,24 +5,28 @@ from typing import Protocol, Optional, Dict, Any
 logger = logging.getLogger(__name__)
 
 
-# The abstraction - any class with this method can be used
+# Used by: type hint protocol for HttpSensorSource (not instantiated directly)
 class SensorDataSource(Protocol):
+    # Used by: tasks.py (_process_single_baby), endpoints.py (GET /babies/room-metrics)
     async def get_sensor_data(self, sensor_name: str, baby_id: int) -> Optional[Dict[str, Any]]:
         """Fetch sensor data for a specific baby"""
         ...
 
 
+# Used by: scheduler.py (module-level singleton), endpoints.py (GET /babies/room-metrics), tasks.py (type hint)
 class HttpSensorSource:
     """
     HTTP-based sensor data source that fetches data from sensor APIs.
     Supports baby-specific endpoints with {baby_id} placeholders.
     """
 
+    # Used by: scheduler.py (module-level instantiation), endpoints.py (GET /babies/room-metrics)
     def __init__(self, base_url: str, endpoint_map: Dict[str, str], timeout_seconds: int = 5):
         self.base_url = base_url
         self.endpoint_map = endpoint_map
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
+    # Used by: tasks.py (_process_single_baby), endpoints.py (GET /babies/room-metrics)
     async def get_sensor_data(self, sensor_name: str, baby_id: int) -> Optional[Dict[str, Any]]:
 
         if sensor_name not in self.endpoint_map:

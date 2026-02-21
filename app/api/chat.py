@@ -49,6 +49,7 @@ class ChatResponse(BaseModel):
 # Endpoints
 # ============================================
 
+# Used by: Chat page — AI conversational interface (Gemini with full baby context)
 @router.post("", response_model=ChatResponse)
 async def chat_with_ai(request: ChatRequest):
     """

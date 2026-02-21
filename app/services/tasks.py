@@ -11,6 +11,7 @@ from app.db.models import Babies
 logger = logging.getLogger(__name__)
 
 
+# Used by: scheduler.py (_run_baby_sensor_collection, called every SENSOR_POLL_INTERVAL_SECONDS)
 async def collect_and_store_baby_sensor_data_task(
     data_source: HttpSensorSource
 ) -> Dict[str, Any]:
@@ -78,7 +79,7 @@ async def collect_and_store_baby_sensor_data_task(
         }
         
         logger.info(
-            f"✅ Sensor data collection complete: {success_count}/{len(sleeping_babies)} successful, "
+            f"Sensor data collection complete: {success_count}/{len(sleeping_babies)} successful, "
             f"{failed_count} failed"
         )
         return summary
@@ -88,6 +89,7 @@ async def collect_and_store_baby_sensor_data_task(
         return {"success": 0, "failed": 0, "total": 0, "error": str(e)}
 
 
+# Used by: collect_and_store_baby_sensor_data_task() (processes one baby in parallel)
 async def _process_single_baby(
     baby: Babies,
     data_source: HttpSensorSource,
@@ -97,7 +99,7 @@ async def _process_single_baby(
     try:
         logger.debug(f"Collecting sensor data for baby {baby.id} ({baby.first_name})")
         
-        # Fetch all sensor data concurrently (temperature, humidity, noise, heart_rate)
+        # Fetch all sensor data concurrently (temperature, humidity, noise)
         sensor_names = list(SENSOR_TO_ENDPOINT_MAP.keys())
         sensor_tasks = [
             asyncio.create_task(data_source.get_sensor_data(sensor, baby.id))
@@ -135,7 +137,7 @@ async def _process_single_baby(
             
             if inserted:
                 logger.info(
-                    f"✅ Stored sensor data for baby {baby.id} ({baby.first_name}): "
+                    f"Stored sensor data for baby {baby.id} ({baby.first_name}): "
                     f"{len(sensor_data)}/{len(sensor_names)} sensors"
                 )
                 
@@ -153,14 +155,14 @@ async def _process_single_baby(
                 
                 return True
             else:
-                logger.error(f"❌ Failed to store data in DB for baby {baby.id}")
+                logger.error(f"Failed to store data in DB for baby {baby.id}")
                 return False
         else:
             logger.warning(
-                f"⚠️ No sensor data collected for baby {baby.id} - all sensors failed"
+                f"No sensor data collected for baby {baby.id} - all sensors failed"
             )
             return False
             
     except Exception as e:
-        logger.error(f"❌ Error processing baby {baby.id}: {e}", exc_info=True)
+        logger.error(f"Error processing baby {baby.id}: {e}", exc_info=True)
         return False

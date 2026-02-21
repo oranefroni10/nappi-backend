@@ -56,6 +56,7 @@ class CooldownIgnoredResponse(BaseModel):
     cooldown_remaining_minutes: Optional[int]
 
 
+# Used by: M5 sensor — notifies backend when baby falls asleep
 @router.post("/sleep-start", response_model=SleepStartResponse)
 async def sleep_start(request: SleepEventRequest):
     """
@@ -101,6 +102,7 @@ async def sleep_start(request: SleepEventRequest):
     )
 
 
+# Used by: M5 sensor — notifies backend when baby wakes up; creates awakening event + alert
 @router.post("/sleep-end", response_model=AwakeningEventResponse)
 async def sleep_end(request: SleepEventRequest):
     """
@@ -152,7 +154,6 @@ async def sleep_end(request: SleepEventRequest):
             temp_celcius=last_readings.get("temp_celcius"),
             humidity=last_readings.get("humidity"),
             noise_decibel=last_readings.get("noise_decibel"),
-            heart_rate=last_readings.get("heart_rate"),
             recorded_at=last_readings.get("datetime"),
         )
     
@@ -165,7 +166,6 @@ async def sleep_end(request: SleepEventRequest):
             "temp_celcius": last_readings.get("temp_celcius") if last_readings else None,
             "humidity": last_readings.get("humidity") if last_readings else None,
             "noise_decibel": last_readings.get("noise_decibel") if last_readings else None,
-            "heart_rate": last_readings.get("heart_rate") if last_readings else None,
         } if last_readings else None
     }
     
@@ -224,6 +224,7 @@ async def sleep_end(request: SleepEventRequest):
     )
 
 
+# Used by: Home Dashboard — sleep status indicator; Notifications page — sleep state polling
 @router.get("/sleep-status/{baby_id}")
 async def get_sleep_status(baby_id: int):
     """
@@ -247,6 +248,7 @@ async def get_sleep_status(baby_id: int):
     }
 
 
+# Used by: Internal/debug — lists all currently sleeping babies (APScheduler polling target)
 @router.get("/sleeping-babies")
 async def get_sleeping_babies():
     """
@@ -261,6 +263,7 @@ async def get_sleeping_babies():
     }
 
 
+# Used by: M5 sensor — baby removed from crib; stops tracking without creating awakening event
 @router.post("/baby-away")
 async def baby_away(request: SleepEventRequest):
     """
@@ -307,6 +310,7 @@ async def baby_away(request: SleepEventRequest):
 # Parent Intervention Endpoints
 # ============================================
 
+# Used by: Home Dashboard — parent manual sleep override (mark asleep/awake) with 20min cooldown
 @router.post("/intervention", response_model=InterventionResponse)
 async def parent_intervention(request: InterventionRequest):
     """
@@ -377,6 +381,7 @@ async def parent_intervention(request: InterventionRequest):
         )
 
 
+# Used by: Home Dashboard — checks if intervention cooldown is active for UI feedback
 @router.get("/cooldown-status/{baby_id}")
 async def get_cooldown_status(baby_id: int):
     """
