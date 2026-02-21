@@ -19,6 +19,8 @@ from .models import (
     SleepStartResponse,
     AwakeningEventResponse,
     LastSensorReadings,
+    BulkSensorRequest,
+    BulkSensorResponse,
 )
 from ..services.sleep_state import get_sleep_state_manager, INTERVENTION_COOLDOWN_MINUTES
 from ..services.babies_data import BabyDataManager
@@ -56,6 +58,7 @@ class CooldownIgnoredResponse(BaseModel):
     cooldown_remaining_minutes: Optional[int]
 
 
+# Used by: M5 sensor — notifies backend when baby falls asleep
 @router.post("/sleep-start", response_model=SleepStartResponse)
 async def sleep_start(request: SleepEventRequest):
     """
@@ -101,6 +104,7 @@ async def sleep_start(request: SleepEventRequest):
     )
 
 
+# Used by: M5 sensor — notifies backend when baby wakes up; creates awakening event + alert
 @router.post("/sleep-end", response_model=AwakeningEventResponse)
 async def sleep_end(request: SleepEventRequest):
     """
@@ -222,6 +226,7 @@ async def sleep_end(request: SleepEventRequest):
     )
 
 
+# Used by: Home Dashboard — sleep status indicator; Notifications page — sleep state polling
 @router.get("/sleep-status/{baby_id}")
 async def get_sleep_status(baby_id: int):
     """
@@ -245,6 +250,7 @@ async def get_sleep_status(baby_id: int):
     }
 
 
+# Used by: Internal/debug — lists all currently sleeping babies (APScheduler polling target)
 @router.get("/sleeping-babies")
 async def get_sleeping_babies():
     """
@@ -259,6 +265,7 @@ async def get_sleeping_babies():
     }
 
 
+# Used by: M5 sensor — baby removed from crib; stops tracking without creating awakening event
 @router.post("/baby-away")
 async def baby_away(request: SleepEventRequest):
     """
@@ -302,9 +309,38 @@ async def baby_away(request: SleepEventRequest):
 
 
 # ============================================
+# Bulk Sensor Data (M5 offline buffer sync)
+# ============================================
+
+# Used by: M5 sensor — sends buffered readings after WiFi reconnect to fill data gaps
+@router.post("/bulk-readings", response_model=BulkSensorResponse)
+async def bulk_readings(request: BulkSensorRequest):
+    """
+    Accept batch of buffered sensor readings from M5 device.
+
+    Called after WiFi reconnection to backfill data that was collected
+    while the device was offline. Each reading has a device-provided
+    timestamp so the data slots into the correct time position.
+    """
+    if not request.readings:
+        return BulkSensorResponse(inserted=0, message="No readings provided")
+
+    logger.info(f"Received {len(request.readings)} buffered readings from M5")
+
+    baby_manager = BabyDataManager()
+    inserted = await baby_manager.insert_bulk_sleep_realtime_data(request.readings)
+
+    return BulkSensorResponse(
+        inserted=inserted,
+        message=f"Inserted {inserted} offline readings"
+    )
+
+
+# ============================================
 # Parent Intervention Endpoints
 # ============================================
 
+# Used by: Home Dashboard — parent manual sleep override (mark asleep/awake) with 20min cooldown
 @router.post("/intervention", response_model=InterventionResponse)
 async def parent_intervention(request: InterventionRequest):
     """
@@ -375,6 +411,7 @@ async def parent_intervention(request: InterventionRequest):
         )
 
 
+# Used by: Home Dashboard — checks if intervention cooldown is active for UI feedback
 @router.get("/cooldown-status/{baby_id}")
 async def get_cooldown_status(baby_id: int):
     """

@@ -53,6 +53,7 @@ MIN_DAYS = 7
 MAX_DAYS = 90  # 3 months
 
 
+# Used by: get_sensor_stats, get_daily_sleep — validates date range bounds (7-90 days)
 def validate_date_range(start_date: date, end_date: date) -> None:
     """Validate date range is within allowed bounds."""
     if end_date < start_date:
@@ -76,6 +77,7 @@ def validate_date_range(start_date: date, end_date: date) -> None:
         )
 
 
+# Used by: All stats endpoints — validates baby exists before querying data
 async def validate_baby_exists(baby_id: int) -> None:
     """Validate that the baby exists in the database."""
     baby_manager = BabyDataManager()
@@ -88,6 +90,7 @@ async def validate_baby_exists(baby_id: int) -> None:
         )
 
 
+# Used by: Statistics page — sensor averages line chart (temperature/humidity/noise over time)
 @router.get("/sensors", response_model=SensorStatsResponse)
 async def get_sensor_stats(
     baby_id: int = Query(..., description="Baby ID"),
@@ -145,6 +148,7 @@ async def get_sensor_stats(
     )
 
 
+# Used by: Statistics page — sleep pattern clusters chart (typical sleep windows per month)
 @router.get("/sleep-patterns", response_model=SleepPatternsResponse)
 async def get_sleep_patterns(
     baby_id: int = Query(..., description="Baby ID"),
@@ -208,6 +212,7 @@ async def get_sleep_patterns(
     )
 
 
+# Used by: Statistics page — daily sleep totals bar chart (hours per day + session count)
 @router.get("/daily-sleep", response_model=DailySleepResponse)
 async def get_daily_sleep(
     baby_id: int = Query(..., description="Baby ID"),
@@ -269,6 +274,7 @@ async def get_daily_sleep(
     )
 
 
+# Used by: Statistics page — AI-powered awakening correlation insights (Gemini)
 @router.get("/insights")
 async def get_sleep_insights(
     baby_id: int = Query(..., description="Baby ID"),
@@ -350,6 +356,7 @@ async def get_sleep_insights(
     }
 
 
+# Used by: Home Dashboard — optimal sleep conditions card (best temp/humidity/noise)
 @router.get("/optimal", response_model=OptimalStatsResponse)
 async def get_optimal_stats(
     baby_id: int = Query(..., description="Baby ID")
@@ -397,6 +404,7 @@ async def get_optimal_stats(
     )
 
 
+# Used by: Statistics page — weekly/monthly sleep trend analysis with AI insights
 @router.get("/trends", response_model=TrendsResponse)
 async def get_trends(
     baby_id: int = Query(..., description="Baby ID")
@@ -440,6 +448,7 @@ async def get_trends(
     return response
 
 
+# Used by: Home Dashboard — next sleep prediction card (wake windows + bedtime suggestion)
 @router.get("/schedule-prediction", response_model=SchedulePredictionResponse)
 async def get_schedule_prediction_endpoint(
     baby_id: int = Query(..., description="Baby ID")
@@ -489,6 +498,7 @@ async def get_schedule_prediction_endpoint(
     return response
 
 
+# Used by: Home Dashboard — combined AI summary (sleep quality, environment, tips, trends)
 @router.get("/ai-summary", response_model=AISummaryResponse)
 async def get_ai_summary(
     baby_id: int = Query(..., description="Baby ID")
@@ -657,6 +667,7 @@ async def get_ai_summary(
     )
 
 
+# Used by: Statistics page — enhanced multi-section AI insights (cause, tips, environment, age context)
 @router.get("/insights-enhanced", response_model=EnhancedInsightsResponse)
 async def get_enhanced_insights(
     baby_id: int = Query(..., description="Baby ID"),
@@ -747,6 +758,7 @@ async def get_enhanced_insights(
     )
 
 
+# Used by: get_ai_summary — generates context-aware daily tip based on environment/sleep/trends
 def _generate_todays_tip(
     baby_name: str,
     environment: EnvironmentStatus,
@@ -794,6 +806,7 @@ def _generate_todays_tip(
         return f"A consistent bedtime routine helps {baby_name} wind down and sleep better through the night."
 
 
+# Used by: get_ai_summary — generates list of short insight strings for dashboard display
 def _generate_quick_insights(
     baby_name: str,
     sleep_summary: SleepQualitySummary,

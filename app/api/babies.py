@@ -63,6 +63,7 @@ class DeleteResponse(BaseModel):
 # Endpoints
 # ============================================
 
+# Used by: User Profile page — baby notes section (list all notes)
 @router.get("/{baby_id}/notes", response_model=NotesListResponse)
 async def list_notes(
     baby_id: int,
@@ -100,6 +101,7 @@ async def list_notes(
     )
 
 
+# Used by: User Profile page — add new baby note
 @router.post("/{baby_id}/notes", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_note(
     baby_id: int,
@@ -108,8 +110,6 @@ async def create_note(
 ):
     """
     Create a new note for a baby.
-    
-    Title is limited to 200 characters.
     """
     baby_manager = BabyDataManager()
     
@@ -158,6 +158,7 @@ async def create_note(
     )
 
 
+# Used by: User Profile page — edit existing baby note
 @router.put("/{baby_id}/notes/{note_id}", response_model=NoteResponse)
 async def update_note(
     baby_id: int,
@@ -167,8 +168,6 @@ async def update_note(
 ):
     """
     Update an existing note.
-    
-    Title is limited to 200 characters.
     """
     baby_manager = BabyDataManager()
     
@@ -218,6 +217,7 @@ async def update_note(
     )
 
 
+# Used by: User Profile page — delete baby note
 @router.delete("/{baby_id}/notes/{note_id}", response_model=DeleteResponse)
 async def delete_note(
     baby_id: int,

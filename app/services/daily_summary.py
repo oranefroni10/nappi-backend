@@ -61,6 +61,7 @@ class DailySummaryResult:
     error: Optional[str] = None
 
 
+# Used by: count_awakenings_from_sleep_blocks() (classifies block end time into morning/noon/night)
 def get_time_period(dt: datetime) -> str:
     """
     Determine which time period a datetime falls into.
@@ -81,6 +82,7 @@ def get_time_period(dt: datetime) -> str:
         return "night"
 
 
+# Used by: generate_daily_summary() (averages temp/humidity/noise for the day)
 def calculate_sensor_averages(sensor_data: List[Dict[str, Any]]) -> SensorAverages:
     """
     Calculate average sensor readings from a list of data points.
@@ -105,6 +107,7 @@ def calculate_sensor_averages(sensor_data: List[Dict[str, Any]]) -> SensorAverag
     )
 
 
+# Used by: generate_daily_summary() (counts awakenings per time period using sleep blocks)
 def count_awakenings_from_sleep_blocks(
     events: List[Dict[str, Any]],
     timezone: pytz.timezone = ISRAEL_TZ
@@ -147,6 +150,7 @@ def count_awakenings_from_sleep_blocks(
     return counts
 
 
+# Used by: run_daily_summary_job() (generates summary for a single baby)
 async def generate_daily_summary(
     baby_id: int,
     summary_date: date,
@@ -260,6 +264,7 @@ async def generate_daily_summary(
         )
 
 
+# Used by: scheduler.py (CronTrigger at 10:00 AM Israel time)
 async def run_daily_summary_job() -> Dict[str, Any]:
     """
     Main job function to generate daily summaries for all babies.

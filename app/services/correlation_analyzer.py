@@ -35,6 +35,7 @@ HEALTHY_RANGES = {
 _gemini_client = None
 
 
+# Used by: CorrelationAnalyzer._generate_gemini_insights(), CorrelationAnalyzer._generate_enhanced_insights(), generate_quick_insight()
 def _get_gemini_client():
     """Lazy initialization of Gemini client."""
     global _gemini_client
@@ -141,6 +142,7 @@ class CorrelationAnalyzer:
         self.change_thresholds = settings.CORRELATION_CHANGE_THRESHOLDS
         self.time_window_minutes = settings.CORRELATION_TIME_WINDOW_MINUTES
 
+    # Used by: self.analyze_awakening(), self.analyze_awakening_enhanced()
     async def _get_baby_context(
         self,
         baby_id: int,
@@ -194,6 +196,7 @@ class CorrelationAnalyzer:
             logger.warning(f"Failed to get baby context: {e}")
             return None
 
+    # Used by: self._get_baby_context() (fetches optimal conditions for AI prompt)
     async def _get_optimal_stats(self, baby_id: int) -> Dict[str, Optional[float]]:
         """Get optimal conditions for this baby from optimal_stats table."""
         try:
@@ -214,6 +217,7 @@ class CorrelationAnalyzer:
             logger.warning(f"Failed to get optimal stats: {e}")
         return {}
 
+    # Used by: self._get_baby_context() (counts sleep blocks in last 24h for AI prompt)
     async def _count_recent_awakenings(
         self,
         baby_id: int,
@@ -237,6 +241,7 @@ class CorrelationAnalyzer:
             logger.warning(f"Failed to count recent awakenings: {e}")
             return 0
 
+    # Used by: stats.py (POST correlation analysis endpoint), analyze_awakening() convenience function
     async def analyze_awakening(
         self,
         baby_id: int,
@@ -336,6 +341,7 @@ class CorrelationAnalyzer:
                 error=str(e)
             )
 
+    # Used by: self.analyze_awakening(), self.analyze_awakening_enhanced()
     def _calculate_parameter_changes(
         self,
         sensor_data: List[Dict[str, Any]]
@@ -394,6 +400,7 @@ class CorrelationAnalyzer:
 
         return changes
 
+    # Used by: self.analyze_awakening(), self.analyze_awakening_enhanced()
     def _filter_significant_changes(
         self,
         changes: List[ParameterChange]
@@ -404,6 +411,7 @@ class CorrelationAnalyzer:
             if change.change_percent >= self.change_thresholds.get(change.param_name, 10.0)
         ]
 
+    # Used by: self.analyze_awakening(), self.analyze_awakening_enhanced()
     def _build_parameters_dict(
         self,
         changes: List[ParameterChange]
@@ -419,6 +427,7 @@ class CorrelationAnalyzer:
             for change in changes
         }
 
+    # Used by: self.analyze_awakening() (generates AI insight via Gemini)
     async def _generate_gemini_insights(
         self,
         baby_id: int,
@@ -487,6 +496,7 @@ class CorrelationAnalyzer:
             logger.error(f"Gemini API error for baby {baby_id}: {e}")
             return None
 
+    # Used by: self._generate_gemini_insights() (builds enriched prompt with full context)
     def _build_gemini_prompt(
         self,
         awakened_at: datetime,
@@ -642,6 +652,7 @@ Respond in a conversational tone as if chatting with a friend who happens to be 
 
         return prompt
 
+    # Used by: self._generate_enhanced_insights() (builds structured multi-section prompt)
     def _build_enhanced_prompt(
         self,
         awakened_at: datetime,
@@ -742,6 +753,7 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
 
         return prompt
 
+    # Used by: self._generate_enhanced_insights() (parses Gemini response into sections)
     def _parse_structured_insight(self, response_text: str) -> StructuredInsight:
         """Parse AI response into structured insight sections."""
         
@@ -802,6 +814,7 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
             raw_text=response_text
         )
 
+    # Used by: stats.py (POST enhanced correlation analysis endpoint)
     async def analyze_awakening_enhanced(
         self,
         baby_id: int,
@@ -900,6 +913,7 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
                 error=str(e)
             )
 
+    # Used by: self.analyze_awakening_enhanced() (generates structured multi-section AI insights)
     async def _generate_enhanced_insights(
         self,
         baby_id: int,
@@ -955,6 +969,7 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
         
         return None
 
+    # Used by: self._build_gemini_prompt(), self._build_enhanced_prompt() (formats age for AI prompts)
     def _format_age(self, age_months: int) -> str:
         """Format age in a readable way."""
         if age_months < 1:
@@ -973,7 +988,7 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
             return f"{years} year{'s' if years > 1 else ''} and {months} month{'s' if months > 1 else ''} old"
 
 
-# Convenience function for direct use
+# Used by: (convenience wrapper, no external callers found - callers use CorrelationAnalyzer directly)
 async def analyze_awakening(
     baby_id: int,
     awakened_at: datetime,
@@ -993,6 +1008,7 @@ async def analyze_awakening(
     )
 
 
+# Used by: sensor_events.py (sleep-end - quick AI insight), correlation_analyzer.py analyze_awakening_enhanced()
 async def generate_quick_insight(
     baby_id: int,
     awakened_at: datetime,

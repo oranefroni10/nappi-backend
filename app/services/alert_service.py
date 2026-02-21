@@ -76,6 +76,7 @@ class SSEManager:
         self._queues: Dict[int, Set[asyncio.Queue]] = {}  # user_id -> set of queues
         self._lock = asyncio.Lock()
     
+    # Used by: alerts.py (SSE stream endpoint - client connects)
     async def subscribe(self, user_id: int) -> asyncio.Queue:
         """Subscribe a client to receive alerts."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -86,6 +87,7 @@ class SSEManager:
             logger.info(f"SSE client subscribed for user {user_id}")
         return queue
     
+    # Used by: alerts.py (SSE stream endpoint - client disconnects)
     async def unsubscribe(self, user_id: int, queue: asyncio.Queue):
         """Unsubscribe a client."""
         async with self._lock:
@@ -95,6 +97,7 @@ class SSEManager:
                     del self._queues[user_id]
             logger.info(f"SSE client unsubscribed for user {user_id}")
     
+    # Used by: AlertService.create_alert() (pushes alert to all connected SSE clients)
     async def broadcast(self, user_id: int, alert: Alert):
         """Broadcast an alert to all connected clients for a user."""
         async with self._lock:
@@ -105,6 +108,7 @@ class SSEManager:
                 except Exception as e:
                     logger.error(f"Failed to broadcast alert to queue: {e}")
     
+    # Used by: (internal utility, no external callers found)
     def get_connected_count(self, user_id: int) -> int:
         """Get number of connected clients for a user."""
         return len(self._queues.get(user_id, set()))
@@ -114,6 +118,7 @@ class SSEManager:
 _sse_manager: Optional[SSEManager] = None
 
 
+# Used by: alerts.py (SSE stream endpoint), AlertService.__init__()
 def get_sse_manager() -> SSEManager:
     """Get the SSE manager singleton."""
     global _sse_manager
@@ -133,6 +138,7 @@ class AlertService:
         self.sse_manager = get_sse_manager()
         self._alert_cooldowns: Dict[Tuple[int, str], datetime] = {}  # (baby_id, alert_type) → cooldown_until
 
+    # Used by: self.check_thresholds() (prevents repeated alerts for same condition)
     def _is_alert_on_cooldown(self, baby_id: int, alert_type: str) -> bool:
         """Check if an alert type is on cooldown for a baby."""
         key = (baby_id, alert_type)
@@ -141,11 +147,13 @@ class AlertService:
             return True
         return False
 
+    # Used by: self.check_thresholds() (sets cooldown after alert is sent)
     def _set_alert_cooldown(self, baby_id: int, alert_type: str) -> None:
         """Set cooldown for an alert type for a baby."""
         key = (baby_id, alert_type)
         self._alert_cooldowns[key] = datetime.utcnow() + timedelta(minutes=ALERT_COOLDOWN_MINUTES)
     
+    # Used by: self.check_thresholds(), self.create_awakening_alert() (user lookup when user_id not provided)
     async def get_user_id_for_baby(self, baby_id: int) -> Optional[int]:
         """Get the user_id who owns this baby."""
         try:
@@ -160,6 +168,7 @@ class AlertService:
             logger.error(f"Failed to get user_id for baby {baby_id}: {e}")
             return None
     
+    # Used by: self.check_thresholds() (sensor threshold alerts), self.create_awakening_alert() (baby woke up alert)
     async def create_alert(
         self,
         baby_id: int,
@@ -243,6 +252,7 @@ class AlertService:
             logger.error(f"Failed to create alert: {e}")
             return None
     
+    # Used by: alerts.py (GET alerts list endpoint)
     async def get_alerts_for_user(
         self,
         user_id: int,
@@ -299,6 +309,7 @@ class AlertService:
             logger.error(f"Failed to get alerts for user {user_id}: {e}")
             return []
     
+    # Used by: alerts.py (GET unread count endpoint)
     async def get_unread_count(self, user_id: int) -> int:
         """Get the count of unread alerts for a user."""
         try:
@@ -316,6 +327,7 @@ class AlertService:
             logger.error(f"Failed to get unread count for user {user_id}: {e}")
             return 0
     
+    # Used by: alerts.py (PATCH mark single alert as read endpoint)
     async def mark_as_read(self, alert_id: int, user_id: int) -> bool:
         """Mark a single alert as read."""
         try:
@@ -335,6 +347,7 @@ class AlertService:
             logger.error(f"Failed to mark alert {alert_id} as read: {e}")
             return False
     
+    # Used by: alerts.py (POST mark all alerts as read endpoint)
     async def mark_all_as_read(self, user_id: int) -> int:
         """Mark all alerts as read for a user. Returns count of updated alerts."""
         try:
@@ -353,6 +366,7 @@ class AlertService:
             logger.error(f"Failed to mark all alerts as read for user {user_id}: {e}")
             return 0
     
+    # Used by: alerts.py (DELETE alerts endpoint)
     async def delete_alerts(self, alert_ids: List[int], user_id: int) -> int:
         """Delete alerts by IDs for a user. Returns count of deleted alerts."""
         try:
@@ -370,6 +384,7 @@ class AlertService:
             logger.error(f"Failed to delete alerts for user {user_id}: {e}")
             return 0
 
+    # Used by: tasks.py (sensor polling - checks thresholds after each reading)
     async def check_thresholds(
         self,
         baby_id: int,
@@ -479,6 +494,7 @@ class AlertService:
 
         return alerts
     
+    # Used by: sensor_events.py (sleep-end endpoint - notifies parent baby woke up)
     async def create_awakening_alert(
         self,
         baby_id: int,
@@ -522,7 +538,10 @@ class AlertService:
             "awakened_at": awakened_at.isoformat()
         }
         if last_sensor_readings:
-            metadata["last_sensor_readings"] = last_sensor_readings
+            metadata["last_sensor_readings"] = {
+                k: v.isoformat() if isinstance(v, datetime) else v
+                for k, v in last_sensor_readings.items()
+            }
         
         return await self.create_alert(
             baby_id=baby_id,
@@ -534,6 +553,7 @@ class AlertService:
             metadata=metadata
         )
     
+    # Used by: self.create_alert() (sends web push after DB insert + SSE broadcast)
     async def _send_push_notification(self, user_id: int, alert: Alert):
         """Send a web push notification for an alert."""
         try:
@@ -555,6 +575,7 @@ class AlertService:
 _alert_service: Optional[AlertService] = None
 
 
+# Used by: sensor_events.py (awakening alert), tasks.py (threshold alerts), alerts.py (all alert CRUD endpoints)
 def get_alert_service() -> AlertService:
     """Get the alert service singleton."""
     global _alert_service

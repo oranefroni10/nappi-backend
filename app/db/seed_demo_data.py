@@ -38,8 +38,6 @@ HUMIDITY_MIN, HUMIDITY_MAX = 35.0, 70.0
 NOISE_OPTIMAL = 35.0
 NOISE_MIN, NOISE_MAX = 25.0, 55.0
 
-# Heart rate by age (bpm)
-
 # =============================================================================
 # Demo Data Definitions
 # =============================================================================
@@ -194,7 +192,7 @@ AI_INSIGHT_TEMPLATES = [
     "Noise levels spiked to {value}dB around the time of awakening. Check for external noise sources.",
     "Humidity dropped significantly before awakening. The air might be too dry - consider a humidifier.",
     "Multiple environmental factors changed before awakening: temperature rose and noise increased slightly.",
-    "Heart rate elevated before awakening, possibly indicating discomfort from room temperature.",
+    "Room conditions changed before awakening, possibly indicating discomfort from temperature shift.",
     "Sleep pattern disrupted earlier than usual. Environmental conditions were within normal range - may be developmental.",
 ]
 
@@ -243,28 +241,6 @@ def generate_sensor_reading(
         "noise_decibel": round(noise, 1),
     }
 
-
-def generate_sleep_quality_score(
-    temp: float,
-    humidity: float,
-    noise: float,
-) -> int:
-    """Calculate sleep quality score (0-100) based on environmental factors."""
-    score = 100
-    
-    # Temperature penalty
-    temp_diff = abs(temp - TEMP_OPTIMAL)
-    score -= min(20, temp_diff * 5)
-    
-    # Humidity penalty
-    humidity_diff = abs(humidity - HUMIDITY_OPTIMAL)
-    score -= min(15, humidity_diff * 0.5)
-    
-    # Noise penalty
-    noise_diff = max(0, noise - NOISE_OPTIMAL)
-    score -= min(25, noise_diff * 1.5)
-    
-    return max(0, min(100, int(score)))
 
 
 def generate_correlation_parameters(
@@ -523,11 +499,6 @@ async def seed_sleep_data_for_day(
                 spike_chance=spike_chance
             )
             reading["datetime"] = current_time
-            reading["sleep_quality_score"] = generate_sleep_quality_score(
-                reading["temp_celcius"],
-                reading["humidity"],
-                reading["noise_decibel"],
-            )
             sensor_readings.append(reading)
             readings_before_awakening.append(reading)
             
@@ -637,11 +608,6 @@ async def seed_sleep_data_for_day(
                 base_temp, base_humidity, base_noise
             )
             reading["datetime"] = current_time
-            reading["sleep_quality_score"] = generate_sleep_quality_score(
-                reading["temp_celcius"],
-                reading["humidity"],
-                reading["noise_decibel"],
-            )
             sensor_readings.append(reading)
             readings_before_awakening.append(reading)
             current_time += timedelta(minutes=SENSOR_INTERVAL_MINUTES)
@@ -716,18 +682,17 @@ async def seed_sleep_realtime_data(
                 values_list = []
                 params = {"baby_id": baby_id}
                 for idx, reading in enumerate(batch):
-                    values_list.append(f"(:baby_id, :dt{idx}, :hum{idx}, :temp{idx}, :noise{idx}, :sq{idx})")
+                    values_list.append(f"(:baby_id, :dt{idx}, :hum{idx}, :temp{idx}, :noise{idx})")
                     params[f"dt{idx}"] = reading["datetime"]
                     params[f"hum{idx}"] = reading["humidity"]
                     params[f"temp{idx}"] = reading["temp_celcius"]
                     params[f"noise{idx}"] = reading["noise_decibel"]
-                    params[f"sq{idx}"] = reading["sleep_quality_score"]
-                
+
                 values_sql = ", ".join(values_list)
                 await session.execute(
                     text(f'''
                         INSERT INTO "Nappi"."sleep_realtime_data"
-                        (baby_id, datetime, humidity, temp_celcius, noise_decibel, sleep_quality_score)
+                        (baby_id, datetime, humidity, temp_celcius, noise_decibel)
                         VALUES {values_sql}
                     '''),
                     params
@@ -901,18 +866,10 @@ async def seed_optimal_stats(
         if not sensor_data:
             continue
         
-        # Find readings with high sleep quality scores
-        high_quality_readings = [r for r in sensor_data if r.get("sleep_quality_score", 0) >= 80]
-        
-        if high_quality_readings:
-            optimal_temp = sum(r["temp_celcius"] for r in high_quality_readings) / len(high_quality_readings)
-            optimal_humidity = sum(r["humidity"] for r in high_quality_readings) / len(high_quality_readings)
-            optimal_noise = sum(r["noise_decibel"] for r in high_quality_readings) / len(high_quality_readings)
-        else:
-            # Fallback to ideal values
-            optimal_temp = TEMP_OPTIMAL
-            optimal_humidity = HUMIDITY_OPTIMAL
-            optimal_noise = NOISE_OPTIMAL
+        # Average all sensor readings for optimal stats
+        optimal_temp = sum(r["temp_celcius"] for r in sensor_data) / len(sensor_data)
+        optimal_humidity = sum(r["humidity"] for r in sensor_data) / len(sensor_data)
+        optimal_noise = sum(r["noise_decibel"] for r in sensor_data) / len(sensor_data)
 
         await session.execute(
             text('''

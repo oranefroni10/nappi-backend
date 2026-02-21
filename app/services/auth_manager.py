@@ -10,6 +10,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 
+# Used by: auth.py (POST /auth/signup, /auth/register-baby, /auth/signin, /auth/change-password)
 class AuthManager:
     """
     Manager class for authentication operations.
@@ -19,6 +20,7 @@ class AuthManager:
     def __init__(self):
         self.database = get_database()
 
+    # Used by: auth.py (POST /auth/signup)
     async def signup(
         self,
         username: str,
@@ -86,6 +88,7 @@ class AuthManager:
             logger.info(f"User registered: {first_name} {last_name}, baby_found={baby is not None}")
             return user, baby, baby is not None
 
+    # Used by: auth.py (POST /auth/register-baby)
     async def register_baby(
         self,
         user_id: int,
@@ -146,6 +149,7 @@ class AuthManager:
             logger.info(f"Baby registered: {first_name} {user_row['last_name']} → user_id={user_id}")
             return user, baby
 
+    # Used by: auth.py (POST /auth/signin)
     async def signin(
         self,
         username: str,
@@ -197,6 +201,7 @@ class AuthManager:
             logger.info(f"User signed in: {username}")
             return user, baby
 
+    # Used by: auth.py (POST /auth/change-password)
     async def change_password(
             self,
             user_id: int,

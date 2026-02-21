@@ -265,7 +265,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
   "ended_at": "2026-02-20T06:30:00",
   "total_sleep_minutes": 510,
   "awakenings_count": 2,
-  "sleep_quality_score": 87,
   "avg_temperature": 21.5,
   "avg_humidity": 48.0,
   "max_noise": 42.0
@@ -430,12 +429,66 @@ Returns daily averages from `daily_summary` table. Supports: `temperature`, `hum
 GET /stats/sleep-patterns?baby_id=1&month=2&year=2026
 ```
 
-Clusters sleep sessions by time of day using a 2-hour gap threshold:
-- Sessions within 2h of each other → same cluster
-- Labels: "Morning nap" (5-11), "Afternoon nap" (11-17), "Night sleep" (other)
-- Returns: avg start/end times, duration, session count, earliest/latest range
+Clusters sleep sessions by time of day using a **gap-based algorithm** (2-hour threshold). This is the data shown in the **Sleep Patterns** chart on the Statistics page.
 
-### 3. Daily Sleep Totals (`/stats/daily-sleep`)
+### 3. Sleep Pattern Clustering Algorithm
+
+Implemented in `app/services/sleep_patterns.py`.
+
+**How it works:**
+
+1. Convert each session's start time to decimal hours (e.g., 8:30 → 8.5)
+2. Sort all sessions by start hour (time of day, ignoring date)
+3. Walk through sorted sessions — if the gap between consecutive start times > 2h, start a new cluster
+4. Label each cluster by its average start hour:
+   - `5:00–11:00` → "Morning nap"
+   - `11:00–17:00` → "Afternoon nap"
+   - Otherwise → "Night sleep"
+5. Compute per-cluster stats: avg start/end, avg duration, session count, earliest/latest range
+
+**Walkthrough example:**
+
+Given 8 sleep sessions recorded over a month:
+
+| Session | Start | End   |
+|---------|-------|-------|
+| A       | 09:00 | 10:15 |
+| B       | 09:30 | 10:45 |
+| C       | 08:45 | 10:00 |
+| D       | 13:00 | 14:30 |
+| E       | 13:15 | 14:00 |
+| F       | 20:30 | 06:15 |
+| G       | 20:00 | 05:45 |
+| H       | 21:00 | 06:30 |
+
+**Step 1 — Sort by start hour (decimal):**
+
+```
+C(8.75) → A(9.0) → B(9.5) → D(13.0) → E(13.25) → G(20.0) → F(20.5) → H(21.0)
+```
+
+**Step 2 — Cluster using 2h gap threshold:**
+
+```
+C ─0.25h─ A ─0.5h─ B ──3.5h──> D ─0.25h─ E ──6.75h──> G ─0.5h─ F ─0.5h─ H
+|____Cluster 1____|   (gap!)   |_Cluster 2_|   (gap!)   |____Cluster 3____|
+```
+
+- **Cluster 1**: C, A, B — gaps of 0.25h and 0.5h (both < 2h)
+- **Cluster 2**: D, E — gap of 0.25h (< 2h)
+- **Cluster 3**: G, F, H — gaps of 0.5h and 0.5h (both < 2h)
+
+**Step 3 — Label & compute averages:**
+
+| Cluster | Label          | Avg Start | Avg End | Avg Duration | Sessions | Range        |
+|---------|----------------|-----------|---------|--------------|----------|--------------|
+| 1       | Morning nap    | 09:05     | 10:20   | 1.25h        | 3        | 08:45–10:45  |
+| 2       | Afternoon nap  | 13:07     | 14:15   | 1.12h        | 2        | 13:00–14:30  |
+| 3       | Night sleep    | 20:30     | 06:10   | 9.67h        | 3        | 20:00–06:30  |
+
+> **Note:** Overnight sessions (e.g., 20:30→06:15) use adjusted end hours internally (06:15 → 30.25) to compute correct averages, then convert back to 24h format via `% 24`.
+
+### 4. Daily Sleep Totals (`/stats/daily-sleep`)
 
 ```
 GET /stats/daily-sleep?baby_id=1&start_date=2026-02-01&end_date=2026-02-14
@@ -443,7 +496,7 @@ GET /stats/daily-sleep?baby_id=1&start_date=2026-02-01&end_date=2026-02-14
 
 Returns total sleep hours + session count per day. Session counts use sleep blocks (not raw events).
 
-### 4. Trends (`/stats/trends`)
+### 5. Trends (`/stats/trends`)
 
 ```
 GET /stats/trends?baby_id=1

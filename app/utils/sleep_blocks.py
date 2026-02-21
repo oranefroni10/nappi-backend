@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_GAP_THRESHOLD_MINUTES = 30
 
 
+# Used by: group_into_sleep_blocks() return type; consumed by stats.py, chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py
 @dataclass
 class SleepBlock:
     """A logical sleep block grouping consecutive awakening events."""
@@ -29,6 +30,7 @@ class SleepBlock:
     events: List[Dict[str, Any]] = field(default_factory=list)
 
 
+# Used by: stats.py (GET /stats/daily-sleep), chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py
 def group_into_sleep_blocks(
     events: List[Dict[str, Any]],
     gap_threshold_minutes: float = DEFAULT_GAP_THRESHOLD_MINUTES,
@@ -82,6 +84,7 @@ def group_into_sleep_blocks(
     return blocks
 
 
+# Used by: _normalize_event() when source="auto"
 def _detect_source(event: Dict[str, Any]) -> str:
     """Auto-detect the source format of an event dict."""
     if "event_metadata" in event:
@@ -93,6 +96,7 @@ def _detect_source(event: Dict[str, Any]) -> str:
     return "unknown"
 
 
+# Used by: _normalize_event()
 def _parse_timestamp(value: Any) -> Optional[datetime]:
     """Parse a timestamp from various formats."""
     if isinstance(value, datetime):
@@ -105,6 +109,7 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
     return None
 
 
+# Used by: group_into_sleep_blocks()
 def _normalize_event(event: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
     """
     Extract normalized timestamps from an event dict regardless of source.
@@ -168,6 +173,7 @@ def _normalize_event(event: Dict[str, Any], source: str) -> Optional[Dict[str, A
         return None
 
 
+# Used by: group_into_sleep_blocks()
 def _build_block(normalized_events: List[Dict[str, Any]]) -> SleepBlock:
     """Build a SleepBlock from a list of normalized events."""
     block_start = normalized_events[0]["sleep_started_at"]

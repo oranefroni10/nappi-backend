@@ -79,6 +79,7 @@ class SleepCluster:
         return max(s.end_hour_decimal for s in self.sessions)
 
 
+# Used by: analyze_sleep_patterns() (parses raw DB rows into SleepSession objects)
 def parse_sleep_sessions(raw_sessions: List[Dict[str, Any]]) -> List[SleepSession]:
     """
     Parse raw database rows into SleepSession objects.
@@ -120,6 +121,7 @@ def parse_sleep_sessions(raw_sessions: List[Dict[str, Any]]) -> List[SleepSessio
     return sessions
 
 
+# Used by: analyze_sleep_patterns() (groups sessions into time-of-day clusters)
 def cluster_by_start_time(
     sessions: List[SleepSession],
     gap_hours: float = DEFAULT_GAP_HOURS
@@ -167,6 +169,7 @@ def cluster_by_start_time(
     return clusters
 
 
+# Used by: analyze_sleep_patterns() (formats cluster hours as HH:MM strings)
 def decimal_to_time_str(decimal_hours: float) -> str:
     """
     Convert decimal hours to HH:MM string.
@@ -186,6 +189,7 @@ def decimal_to_time_str(decimal_hours: float) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
+# Used by: analyze_sleep_patterns() (labels clusters as Morning nap/Afternoon nap/Night sleep)
 def assign_label(avg_start_hour: float) -> str:
     """
     Assign a human-readable label based on average start hour.
@@ -207,6 +211,7 @@ def assign_label(avg_start_hour: float) -> str:
         return "Night sleep"
 
 
+# Used by: stats.py (GET /stats/patterns), chat_service.py (chat context), schedule_predictor.py (_get_recent_patterns)
 def analyze_sleep_patterns(
     raw_sessions: List[Dict[str, Any]],
     gap_hours: float = DEFAULT_GAP_HOURS
@@ -259,6 +264,7 @@ def analyze_sleep_patterns(
     return patterns
 
 
+# Used by: analyze_sleep_patterns() (sorts patterns by time of day)
 def _time_str_to_sort_key(time_str: str) -> float:
     """Convert HH:MM to decimal for sorting, treating night times (20:00+) as later."""
     parts = time_str.split(":")

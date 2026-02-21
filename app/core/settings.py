@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# Used by: main.py, endpoints.py, scheduler.py, tasks.py, chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py, push_service.py, generate_models.py, seed_demo_data.py
 class Settings:
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
@@ -14,7 +15,7 @@ class Settings:
     DATABASE_URL: str = os.getenv("DB_CONNECTION_STRING")
     
     # Sensor API Configuration
-    SENSOR_API_BASE_URL: str = os.getenv("SENSOR_API_BASE_URL", "http://localhost:8001")
+    SENSOR_API_BASE_URL: str = os.getenv("SENSOR_API_BASE_URL", "http://192.168.117.254:8000")
     SENSOR_POLL_INTERVAL_SECONDS: int = int(os.getenv("SENSOR_POLL_INTERVAL_SECONDS", "5"))
     
     # CORS Configuration
@@ -29,7 +30,7 @@ class Settings:
     
     # Gemini AI Configuration
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    # Model options: gemini-2.5-pro-preview-05-06 (best), gemini-2.5-flash (fast & reliable)
+    # Model options: gemini-2.5-pro-preview-05-06, gemini-2.5-flash (default, used everywhere)
     GEMINI_MODEL_CHAT: str = os.getenv("GEMINI_MODEL_CHAT", "models/gemini-2.5-flash")
     GEMINI_MODEL_INSIGHTS: str = os.getenv("GEMINI_MODEL_INSIGHTS", "models/gemini-2.5-flash")
     

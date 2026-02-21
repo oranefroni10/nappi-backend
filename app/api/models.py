@@ -9,7 +9,6 @@ class LastSleepSummary(BaseModel):
     ended_at: datetime
     total_sleep_minutes: int
     awakenings_count: int
-    sleep_quality_score: int
     avg_temperature: Optional[float] = None
     avg_humidity: Optional[float] = None
     max_noise: Optional[float] = None
@@ -55,6 +54,28 @@ class AwakeningEventResponse(BaseModel):
     awakened_at: datetime
     sleep_duration_minutes: float
     last_sensor_readings: Optional[LastSensorReadings] = None
+    message: str
+
+
+# ============================================
+# Bulk Sensor Data (M5 offline buffer sync)
+# ============================================
+
+class BulkSensorReading(BaseModel):
+    """Single buffered sensor reading from M5 offline mode."""
+    baby_id: int
+    datetime: str  # ISO format timestamp from device
+    temp_celcius: Optional[float] = None
+    humidity: Optional[float] = None
+    noise_decibel: Optional[float] = None
+
+class BulkSensorRequest(BaseModel):
+    """Batch of buffered sensor readings sent after WiFi reconnect."""
+    readings: List[BulkSensorReading]
+
+class BulkSensorResponse(BaseModel):
+    """Response for bulk sensor insert."""
+    inserted: int
     message: str
 
 

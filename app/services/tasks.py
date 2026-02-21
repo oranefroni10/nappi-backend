@@ -11,6 +11,7 @@ from app.db.models import Babies
 logger = logging.getLogger(__name__)
 
 
+# Used by: scheduler.py (_run_baby_sensor_collection, called every SENSOR_POLL_INTERVAL_SECONDS)
 async def collect_and_store_baby_sensor_data_task(
     data_source: HttpSensorSource
 ) -> Dict[str, Any]:
@@ -88,6 +89,7 @@ async def collect_and_store_baby_sensor_data_task(
         return {"success": 0, "failed": 0, "total": 0, "error": str(e)}
 
 
+# Used by: collect_and_store_baby_sensor_data_task() (processes one baby in parallel)
 async def _process_single_baby(
     baby: Babies,
     data_source: HttpSensorSource,

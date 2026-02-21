@@ -7,6 +7,7 @@ from typing import Optional
 from decimal import Decimal
 
 
+# Used by: alert_service.py (raw SQL mirrors this schema), alerts.py endpoints
 class Alerts(BaseModel):
     """
     Represents the Nappi.alerts table
@@ -30,6 +31,7 @@ class Alerts(BaseModel):
         }
 
 
+# Used by: babies_data.py (DB queries for awakening data)
 class AwakeningEvents(BaseModel):
     """
     Represents the Nappi.awakening_events table
@@ -46,6 +48,7 @@ class AwakeningEvents(BaseModel):
         }
 
 
+# Used by: babies_data.py, tasks.py (sensor polling), auth_manager.py (signup/login)
 class Babies(BaseModel):
     """
     Represents the Nappi.babies table
@@ -55,7 +58,7 @@ class Babies(BaseModel):
     last_name: str
     birthdate: date
     gender: Optional[str] = None
-    notes: Optional[str] = None  # Parent notes: allergies, conditions, health info
+    notes: Optional[str] = None  # Legacy single-field notes on the baby record (brief health info). Detailed notes use the baby_notes table.
     created_at: Optional[datetime] = None
 
     class Config:
@@ -66,6 +69,7 @@ class Babies(BaseModel):
         }
 
 
+# Used by: babies_data.py (DB queries), correlation_analyzer.py, chat_service.py
 class Correlations(BaseModel):
     """
     Represents the Nappi.correlations table
@@ -84,6 +88,7 @@ class Correlations(BaseModel):
         }
 
 
+# Used by: babies_data.py (DB queries), daily_summary.py (generation), trend_analyzer.py
 class DailySummary(BaseModel):
     """
     Represents the Nappi.daily_summary table
@@ -106,6 +111,7 @@ class DailySummary(BaseModel):
         }
 
 
+# Used by: babies_data.py (DB queries for optimal environment stats)
 class OptimalStats(BaseModel):
     """
     Represents the Nappi.optimal_stats table
@@ -124,6 +130,7 @@ class OptimalStats(BaseModel):
         }
 
 
+# Used by: push_service.py (Web Push subscription management, raw SQL)
 class PushSubscriptions(BaseModel):
     """
     Represents the Nappi.push_subscriptions table
@@ -144,6 +151,7 @@ class PushSubscriptions(BaseModel):
         }
 
 
+# Used by: babies_data.py (sensor data queries), daily_summary.py (daily averages)
 class SleepRealtimeData(BaseModel):
     """
     Represents the Nappi.sleep_realtime_data table
@@ -154,7 +162,6 @@ class SleepRealtimeData(BaseModel):
     humidity: Optional[float] = None
     temp_celcius: Optional[float] = None
     noise_decibel: Optional[float] = None
-    sleep_quality_score: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -164,6 +171,7 @@ class SleepRealtimeData(BaseModel):
         }
 
 
+# Used by: auth_manager.py (login/signup, aliased as User)
 class Users(BaseModel):
     """
     Represents the Nappi.users table
@@ -187,10 +195,11 @@ class Users(BaseModel):
 # MANUAL ADDITIONS - Keep these after regenerating models
 # =============================================================================
 
-# Alias for backward compatibility (auth_manager.py uses singular name)
+# Used by: auth_manager.py (backward-compatible alias for Users)
 User = Users
 
 
+# Used by: auth.py (POST /auth/login, POST /auth/signup response)
 class BabyResponse(BaseModel):
     """
     Baby info returned in API responses.
@@ -209,6 +218,7 @@ class BabyResponse(BaseModel):
         }
 
 
+# Used by: babies.py (GET/POST/DELETE /babies/notes), babies_data.py (note queries)
 class BabyNote(BaseModel):
     """
     Represents an individual note about a baby.

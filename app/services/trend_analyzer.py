@@ -36,6 +36,7 @@ AGE_SLEEP_RECOMMENDATIONS = {
 _gemini_client = None
 
 
+# Used by: TrendAnalyzer.generate_ai_summary()
 def _get_gemini_client():
     """Lazy initialization of Gemini client."""
     global _gemini_client
@@ -51,6 +52,7 @@ def _get_gemini_client():
     return _gemini_client
 
 
+# Used by: TrendAnalyzer.generate_ai_summary(), get_sleep_trends(), stats.py (age recommendation in response)
 def get_age_recommendation(age_months: int) -> Dict[str, Any]:
     """Get sleep recommendations for a specific age in months."""
     for (min_age, max_age), recommendations in AGE_SLEEP_RECOMMENDATIONS.items():
@@ -104,6 +106,7 @@ class TrendAnalyzer:
     def __init__(self):
         self.baby_manager = BabyDataManager()
 
+    # Used by: get_sleep_trends() (7-day and 30-day trend analysis)
     async def analyze_trends(
         self,
         baby_id: int,
@@ -207,6 +210,7 @@ class TrendAnalyzer:
             daily_data=daily_data
         )
 
+    # Used by: self.analyze_trends() (aggregates sessions + summaries by date)
     def _aggregate_daily_data(
         self,
         sessions: List[Dict[str, Any]],
@@ -252,6 +256,7 @@ class TrendAnalyzer:
 
         return daily_data
 
+    # Used by: get_sleep_trends() (AI-powered weekly/monthly summary)
     async def generate_ai_summary(
         self,
         baby_id: int,
@@ -298,7 +303,7 @@ class TrendAnalyzer:
             response = await loop.run_in_executor(
                 None,
                 lambda: client.models.generate_content(
-                    model="models/gemini-2.5-flash",
+                    model=settings.GEMINI_MODEL_INSIGHTS,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
@@ -315,6 +320,7 @@ class TrendAnalyzer:
         
         return None
 
+    # Used by: self.generate_ai_summary() (builds Gemini prompt with trend data)
     def _build_trend_prompt(
         self,
         baby_name: str,
@@ -380,6 +386,7 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
 
         return prompt
 
+    # Used by: self.generate_ai_summary() (parses Gemini response into structured insight)
     def _parse_ai_response(
         self,
         response_text: str,
@@ -439,6 +446,7 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
             age_comparison=age_comparison.strip() or f"Sleep patterns are being compared to typical {self._format_age(age_months)} babies."
         )
 
+    # Used by: self._build_trend_prompt(), self._parse_ai_response() (formats age for prompts and fallback text)
     def _format_age(self, age_months: int) -> str:
         """Format age in a readable way."""
         if age_months < 1:
@@ -457,7 +465,7 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
             return f"{years} year{'s' if years > 1 else ''} and {months} month{'s' if months > 1 else ''} old"
 
 
-# Convenience function for direct use
+# Used by: stats.py (GET /trends endpoint, GET /last-sleep summary endpoint)
 async def get_sleep_trends(
     baby_id: int,
     include_ai_summary: bool = True

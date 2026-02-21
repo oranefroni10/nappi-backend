@@ -76,6 +76,7 @@ class ChangePasswordResponse(BaseModel):
 
 # ========== Endpoints ==========
 
+# Used by: Signup page — new user registration with baby auto-detection
 @router.post("/signup", response_model=SignUpResponse, status_code=status.HTTP_201_CREATED)
 async def signup(request: SignUpRequest):
     """Register new user, check for existing baby using user's last name"""
@@ -113,6 +114,7 @@ async def signup(request: SignUpRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+# Used by: Onboarding page — register baby after signup when no existing baby found
 @router.post("/register-baby", response_model=AuthResponse)
 async def register_baby(request: RegisterBabyRequest):
     """Register baby using user's last name and link to user"""
@@ -148,6 +150,7 @@ async def register_baby(request: RegisterBabyRequest):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
+# Used by: Login page — user authentication
 @router.post("/signin", response_model=AuthResponse)
 async def signin(request: SignInRequest):
     """Authenticate user"""
@@ -178,6 +181,7 @@ async def signin(request: SignInRequest):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
+# Used by: User Profile page — change password form
 @router.post("/change-password", response_model=ChangePasswordResponse)
 async def change_password(request: ChangePasswordRequest):
     """Change user password"""

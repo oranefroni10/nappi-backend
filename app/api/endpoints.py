@@ -4,21 +4,25 @@ Dashboard endpoints - Last sleep summary and current room metrics.
 These endpoints provide personalized data for the user's baby.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from .models import LastSleepSummary, RoomMetrics
 from ..core.database import get_database
+from ..core.settings import settings
+from ..core.utils import SENSOR_TO_ENDPOINT_MAP, SENSOR_TO_DB_COLUMN_MAP
 from ..services.babies_data import BabyDataManager
+from ..services.data_miner import HttpSensorSource
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
+# Used by: Home Dashboard — last sleep summary card
 @router.get("/sleep/latest", response_model=LastSleepSummary)
 async def get_last_sleep_summary(
     baby_id: int = Query(..., description="Baby ID to get sleep summary for")
@@ -29,7 +33,7 @@ async def get_last_sleep_summary(
     Returns data from the latest awakening event including:
     - Sleep start/end times
     - Duration
-    - Quality score (if available)
+    - Avg temperature, avg humidity, max noise (if available)
     """
     database = get_database()
     baby_manager = BabyDataManager()
@@ -64,8 +68,7 @@ async def get_last_sleep_summary(
                     started_at=now - timedelta(hours=2),
                     ended_at=now,
                     total_sleep_minutes=0,
-                    awakenings_count=0,
-                    sleep_quality_score=0
+                    awakenings_count=0
                 )
             
             metadata = row["event_metadata"] or {}
@@ -112,11 +115,10 @@ async def get_last_sleep_summary(
             )
             awakenings_count = awakenings_result.scalar() or 0
             
-            # Get sleep quality score and room averages from sensor data during the nap
+            # Get room averages from sensor data during the nap
             sensor_result = await session.execute(
                 text('''
                     SELECT
-                        AVG(sleep_quality_score) as avg_score,
                         AVG(temp_celcius) as avg_temp,
                         AVG(humidity) as avg_humidity,
                         MAX(noise_decibel) as max_noise
@@ -128,8 +130,6 @@ async def get_last_sleep_summary(
                 {"baby_id": baby_id, "started_at": started_at, "ended_at": ended_at}
             )
             sensor_row = sensor_result.mappings().first()
-            avg_quality = sensor_row["avg_score"] if sensor_row else None
-            sleep_quality_score = int(avg_quality) if avg_quality else 75
 
             avg_temperature = float(sensor_row["avg_temp"]) if sensor_row and sensor_row["avg_temp"] is not None else None
             avg_humidity = float(sensor_row["avg_humidity"]) if sensor_row and sensor_row["avg_humidity"] is not None else None
@@ -141,7 +141,6 @@ async def get_last_sleep_summary(
                 ended_at=ended_at,
                 total_sleep_minutes=int(duration_minutes),
                 awakenings_count=awakenings_count,
-                sleep_quality_score=sleep_quality_score,
                 avg_temperature=avg_temperature,
                 avg_humidity=avg_humidity,
                 max_noise=max_noise
@@ -152,38 +151,70 @@ async def get_last_sleep_summary(
         raise HTTPException(status_code=500, detail="Failed to retrieve sleep data")
 
 
+# Used by: Home Dashboard — current room conditions card
 @router.get("/room/current", response_model=RoomMetrics)
 async def get_current_room_metrics(
     baby_id: int = Query(..., description="Baby ID to get room metrics for")
 ):
     """
-    Get the current room conditions from the latest sensor readings.
-    
-    Returns temperature, humidity, noise levels from the most recent sensor data.
+    Get current room conditions by fetching live sensor data on-demand.
+
+    Falls back to the last DB reading if sensors are unreachable.
     """
     baby_manager = BabyDataManager()
-    
+
     # Validate baby exists
     babies = await baby_manager.get_babies_list()
     baby = next((b for b in babies if b.id == baby_id), None)
-    
+
     if not baby:
         raise HTTPException(status_code=404, detail=f"Baby with id {baby_id} not found")
-    
+
+    # Try live sensor fetch first
+    data_source = HttpSensorSource(
+        base_url=settings.SENSOR_API_BASE_URL,
+        endpoint_map=SENSOR_TO_ENDPOINT_MAP,
+        timeout_seconds=5,
+    )
+
+    sensor_names = list(SENSOR_TO_ENDPOINT_MAP.keys())
+    results = await asyncio.gather(
+        *[data_source.get_sensor_data(sensor, baby_id) for sensor in sensor_names],
+        return_exceptions=True,
+    )
+
+    # Map results to DB column names for consistent field naming
+    live_data = {}
+    for sensor_name, result in zip(sensor_names, results):
+        if result and not isinstance(result, Exception) and isinstance(result, dict) and "value" in result:
+            db_column = SENSOR_TO_DB_COLUMN_MAP.get(sensor_name)
+            if db_column:
+                live_data[db_column] = result["value"]
+
+    if live_data:
+        return RoomMetrics(
+            temperature_c=live_data.get("temp_celcius"),
+            humidity_percent=live_data.get("humidity"),
+            noise_db=live_data.get("noise_decibel"),
+            measured_at=datetime.utcnow(),
+        )
+
+    # Fallback: use last DB reading
+    logger.warning(f"Live sensors unreachable for baby {baby_id}, falling back to last DB reading")
     try:
-        # Get the most recent sensor readings
         last_readings = await baby_manager.get_last_sensor_readings(baby_id)
-        
+
         if not last_readings:
-            return RoomMetrics()
+            return RoomMetrics(notes="Sensors are currently unavailable and no recent data found")
 
         return RoomMetrics(
             temperature_c=last_readings.get("temp_celcius"),
             humidity_percent=last_readings.get("humidity"),
             noise_db=last_readings.get("noise_decibel"),
             measured_at=last_readings.get("datetime"),
+            notes="Live sensors unavailable — showing last recorded data",
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to get room metrics for baby {baby_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve room data")

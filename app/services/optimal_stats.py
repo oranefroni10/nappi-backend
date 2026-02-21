@@ -29,6 +29,7 @@ class OptimalStatsResult:
     error: Optional[str] = None
 
 
+# Used by: calculate_optimal_stats() (weights each day by inverse of total awakenings)
 def calculate_weight(
     morning_awakes: int,
     noon_awakes: int,
@@ -58,6 +59,7 @@ def calculate_weight(
     return 1.0 / (1.0 + total_awakes)
 
 
+# Used by: calculate_optimal_stats() (computes weighted avg for temp/humidity/noise)
 def calculate_weighted_average(
     values: List[float],
     weights: List[float]
@@ -95,6 +97,7 @@ def calculate_weighted_average(
     return round(total_weighted / total_weight, 2)
 
 
+# Used by: run_optimal_stats_job() (calculates optimal stats for a single baby)
 async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
     """
     Calculate optimal stats for a single baby using all historical data.
@@ -204,6 +207,7 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
         )
 
 
+# Used by: scheduler.py (CronTrigger at 10:05 AM Israel time, after daily summary)
 async def run_optimal_stats_job() -> Dict[str, Any]:
     """
     Main job function to calculate optimal stats for all babies.

@@ -35,6 +35,7 @@ MAX_SUMMARY_DAYS = 7
 _gemini_client = None
 
 
+# Used by: ChatService._call_gemini()
 def _get_gemini_client():
     """Lazy initialization of Gemini client."""
     global _gemini_client
@@ -60,6 +61,7 @@ class ChatService:
     def __init__(self):
         self.baby_manager = BabyDataManager()
     
+    # Used by: self.chat() (fetches all context before building AI prompt)
     async def get_full_baby_context(self, baby_id: int) -> Dict[str, Any]:
         """
         Fetch ALL available context for rich, insightful chat responses.
@@ -115,6 +117,7 @@ class ChatService:
             "current_room": current_room,
         }
     
+    # Used by: self._build_chat_prompt() (formats baby age for prompt)
     def _format_age(self, baby) -> str:
         """Format baby's age in a readable way."""
         if not baby or not baby.birthdate:
@@ -139,6 +142,7 @@ class ChatService:
                 return f"{years} year{'s' if years > 1 else ''} old"
             return f"{years} year{'s' if years > 1 else ''} and {months} month{'s' if months > 1 else ''} old"
     
+    # Used by: self._build_chat_prompt() (formats current room conditions for prompt)
     def _format_room(self, room_data: Optional[Dict]) -> str:
         """Format current room conditions."""
         if not room_data:
@@ -154,6 +158,7 @@ class ChatService:
         
         return ", ".join(parts) if parts else "No sensor readings"
     
+    # Used by: self._build_chat_prompt() (formats conversation history for prompt)
     def _format_history(self, history: List[Dict]) -> str:
         """Format conversation history for the prompt."""
         if not history:
@@ -168,6 +173,7 @@ class ChatService:
         
         return "\n".join(formatted)
     
+    # Used by: self.chat() (assembles full prompt with context, history, and user message)
     def _build_chat_prompt(
         self,
         context: Dict[str, Any],
@@ -310,7 +316,7 @@ Provide a helpful, personalized response based on {baby.first_name}'s specific d
 === AGE-SPECIFIC SLEEP GUIDELINES (use these for {age_str}) ===
 
 NEWBORNS (0-3 months):
-- Total sleep: 14-17 hours/day in short 1-2 hour segments
+- Total sleep: 14-17 hours/day 
 - Wake windows: 0-1 month: 30-60 min; 1-3 months: 1-2 hours
 - Naps: No fixed pattern; sleep distributed across day and night. By ~3 months: 4-5 naps/day
 - Night sleep: No consolidated night sleep in early weeks (1-2 hour segments). By 3 months some babies start sleeping 5-8 hour stretches
@@ -396,6 +402,7 @@ RESPONSE GUIDELINES:
         
         return prompt
     
+    # Used by: self.chat() (sends assembled prompt to Gemini API)
     async def _call_gemini(self, prompt: str) -> str:
         """Call Gemini API and return response."""
         client = _get_gemini_client()
@@ -458,6 +465,7 @@ RESPONSE GUIDELINES:
             logger.error(f"Gemini API error in chat: {e}")
             return "I'm sorry, there was an error processing your request. Please try again."
     
+    # Used by: chat.py (POST /chat endpoint)
     async def chat(
         self,
         baby_id: int,
@@ -498,6 +506,7 @@ RESPONSE GUIDELINES:
 _chat_service: Optional[ChatService] = None
 
 
+# Used by: chat.py (POST /chat endpoint)
 def get_chat_service() -> ChatService:
     """Get the chat service singleton."""
     global _chat_service
