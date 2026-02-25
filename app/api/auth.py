@@ -18,8 +18,8 @@ class SignUpRequest(BaseModel):
     repeat_password: str
     first_name: str
     last_name: str
-    baby_first_name: str
-    baby_birthdate: date
+    baby_first_name: Optional[str] = None
+    baby_birthdate: Optional[date] = None
 
     @field_validator('repeat_password')
     @classmethod
@@ -87,7 +87,7 @@ async def signup(request: SignUpRequest):
             first_name=request.first_name,
             last_name=request.last_name,
             baby_first_name=request.baby_first_name,
-            baby_birthdate=request.baby_birthdate
+            baby_birthdate=request.baby_birthdate,
         )
 
         baby_response = None
