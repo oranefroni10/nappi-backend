@@ -2,6 +2,9 @@
 Demo Data Seeder for Nappi
 
 Populates the database with realistic mock data for demonstration purposes.
+Generates 3 months of progressively improving data ending at NOW,
+with the demo baby (Emma) currently sleeping when the script runs.
+
 WARNING: This script will DELETE all existing data!
 
 Usage:
@@ -11,6 +14,7 @@ Usage:
 
 import asyncio
 import json
+import math
 import random
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Tuple, Optional
@@ -19,24 +23,68 @@ from sqlalchemy import text
 
 from app.core.database import get_database
 from app.core.settings import settings
+from app.core.constants import (
+    OPTIMAL_STATS_WEIGHT_BASE,
+    CORRELATION_CHANGE_THRESHOLDS,
+    CORRELATION_QUARTILE_FRACTION,
+)
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-SEED = 42  # For reproducible random data
-DAYS_OF_DATA = 90  # How many days of historical data to generate
-SENSOR_INTERVAL_MINUTES = 5  # How often sensor readings are recorded during sleep
-BATCH_SIZE = 500  # Number of rows to insert in a single batch (for performance)
+SEED = 42
+NOW = datetime.now()
+DAYS_OF_DATA = 90
+SENSOR_INTERVAL_MINUTES = 5
+BATCH_SIZE = 500
 
-# Realistic sensor ranges
-TEMP_OPTIMAL = 21.0
+# Sensor clamping ranges
 TEMP_MIN, TEMP_MAX = 18.0, 26.0
-HUMIDITY_OPTIMAL = 50.0
 HUMIDITY_MIN, HUMIDITY_MAX = 35.0, 70.0
-NOISE_OPTIMAL = 35.0
 NOISE_MIN, NOISE_MAX = 25.0, 55.0
+
+# Progressive baseline targets (day 1 -> day 90)
+PROGRESSION = {
+    "temp_start": 23.0,
+    "temp_end": 21.0,
+    "humidity_start": 55.0,
+    "humidity_end": 50.0,
+    "noise_start": 40.0,
+    "noise_end": 35.0,
+    "variance_start": 0.5,
+    "variance_end": 0.2,
+    "spike_chance_start": 0.08,
+    "spike_chance_end": 0.02,
+}
+
+# Awakening ranges per age category: (start_min, start_max) -> (end_min, end_max)
+AWAKENING_PROGRESSION = {
+    "newborn": {"start": (3, 5), "end": (2, 3)},
+    "infant": {"start": (2, 4), "end": (1, 2)},
+    "toddler": {"start": (1, 3), "end": (0, 1)},
+}
+
+# Night cooling: hours 0-6 get this temperature offset
+NIGHT_COOLING_MIN = -1.0
+NIGHT_COOLING_MAX = -0.3
+
+# Weekend adjustments
+WEEKEND_BEDTIME_SHIFT_MIN = 15  # minutes later
+WEEKEND_BEDTIME_SHIFT_MAX = 30
+WEEKEND_NOISE_BOOST = 1.5  # dB
+WEEKEND_TEMP_BOOST = 0.3  # °C
+
+# Drift injection: ~40% of awakenings get a sensor drift in the last 30 min
+DRIFT_INJECTION_CHANCE = 0.40
+DRIFT_READINGS_COUNT = 6  # last 6 readings (30 min at 5-min intervals)
+
+# Alert read probability by age
+ALERT_READ_OLD = 0.80       # > 30 days ago
+ALERT_READ_RECENT = 0.50    # 7-30 days ago
+ALERT_READ_NEW = 0.20       # < 7 days ago
+
 
 # =============================================================================
 # Demo Data Definitions
@@ -46,7 +94,7 @@ BABIES_DATA = [
     {
         "first_name": "Emma",
         "last_name": "Cohen",
-        "birthdate": date.today() - timedelta(days=90),  # 3 months old
+        "birthdate": NOW.date() - timedelta(days=90),
         "gender": "female",
         "age_category": "newborn",
         "notes_theme": "newborn_reflux",
@@ -54,7 +102,7 @@ BABIES_DATA = [
     {
         "first_name": "Noah",
         "last_name": "Levy",
-        "birthdate": date.today() - timedelta(days=210),  # 7 months old
+        "birthdate": NOW.date() - timedelta(days=210),
         "gender": "male",
         "age_category": "infant",
         "notes_theme": "teething",
@@ -62,7 +110,7 @@ BABIES_DATA = [
     {
         "first_name": "Mia",
         "last_name": "Ben-David",
-        "birthdate": date.today() - timedelta(days=420),  # 14 months old
+        "birthdate": NOW.date() - timedelta(days=420),
         "gender": "female",
         "age_category": "toddler",
         "notes_theme": "eczema",
@@ -75,21 +123,21 @@ USERS_DATA = [
         "password": "demo123",
         "first_name": "Sarah",
         "last_name": "Cohen",
-        "baby_index": 0,  # Emma Cohen
+        "baby_index": 0,
     },
     {
         "username": "david@nappi.app",
         "password": "david123",
         "first_name": "David",
         "last_name": "Levy",
-        "baby_index": 1,  # Noah Levy
+        "baby_index": 1,
     },
     {
         "username": "maya@nappi.app",
         "password": "maya123",
         "first_name": "Maya",
         "last_name": "Ben-David",
-        "baby_index": 2,  # Mia Ben-David
+        "baby_index": 2,
     },
 ]
 
@@ -115,38 +163,33 @@ BABY_NOTES_DATA = {
     ],
 }
 
-# Sleep schedules by age category
 SLEEP_SCHEDULES = {
     "newborn": {
-        "bedtime": (19, 30),  # 7:30 PM
-        "wake_time": (6, 30),  # 6:30 AM
+        "bedtime": (19, 30),
+        "wake_time": (6, 30),
         "naps": [
-            ((9, 0), (10, 30)),    # Morning nap
-            ((12, 30), (14, 0)),   # Early afternoon
-            ((15, 30), (16, 30)),  # Late afternoon
+            ((9, 0), (10, 30)),
+            ((12, 30), (14, 0)),
+            ((15, 30), (16, 30)),
         ],
-        "awakenings_per_night": (2, 4),  # More frequent for newborns
     },
     "infant": {
-        "bedtime": (19, 0),  # 7 PM
-        "wake_time": (6, 0),  # 6 AM
+        "bedtime": (19, 0),
+        "wake_time": (6, 0),
         "naps": [
-            ((9, 30), (11, 0)),   # Morning nap
-            ((14, 0), (15, 30)),  # Afternoon nap
+            ((9, 30), (11, 0)),
+            ((14, 0), (15, 30)),
         ],
-        "awakenings_per_night": (1, 3),
     },
     "toddler": {
-        "bedtime": (19, 30),  # 7:30 PM
-        "wake_time": (6, 30),  # 6:30 AM
+        "bedtime": (19, 30),
+        "wake_time": (6, 30),
         "naps": [
-            ((12, 30), (14, 30)),  # Single afternoon nap
+            ((12, 30), (14, 30)),
         ],
-        "awakenings_per_night": (0, 2),  # Fewer awakenings
     },
 }
 
-# Alert templates
 ALERT_TEMPLATES = {
     "temperature_high": {
         "type": "temperature",
@@ -186,7 +229,6 @@ ALERT_TEMPLATES = {
     },
 }
 
-# AI insight templates for correlations
 AI_INSIGHT_TEMPLATES = [
     "Temperature increased from {before}°C to {after}°C before awakening. Consider maintaining a cooler room temperature.",
     "Noise levels spiked to {value}dB around the time of awakening. Check for external noise sources.",
@@ -198,43 +240,116 @@ AI_INSIGHT_TEMPLATES = [
 
 
 # =============================================================================
-# Helper Functions
+# Utility Functions
 # =============================================================================
 
 def set_seed(seed: int):
-    """Set random seed for reproducibility."""
     random.seed(seed)
 
 
+def get_progress_factor(day_index: int) -> float:
+    """
+    Returns 0.0 (day 0, oldest) to 1.0 (day 89, newest).
+    Uses smooth ease-in-out curve for natural progression.
+    """
+    t = day_index / max(DAYS_OF_DATA - 1, 1)
+    # Smoothstep: 3t^2 - 2t^3
+    return t * t * (3.0 - 2.0 * t)
+
+
+def lerp(start: float, end: float, t: float) -> float:
+    """Linear interpolation."""
+    return start + (end - start) * t
+
+
+def get_awakening_count(age_category: str, progress: float) -> int:
+    """Get number of night awakenings based on age and progress."""
+    prog = AWAKENING_PROGRESSION[age_category]
+    min_val = lerp(prog["start"][0], prog["end"][0], progress)
+    max_val = lerp(prog["start"][1], prog["end"][1], progress)
+    return max(0, round(random.uniform(min_val, max_val)))
+
+
+def get_alert_read_status(alert_time: datetime) -> bool:
+    """Determine if an alert has been read based on its age."""
+    days_ago = (NOW - alert_time).total_seconds() / 86400
+    if days_ago > 30:
+        return random.random() < ALERT_READ_OLD
+    elif days_ago > 7:
+        return random.random() < ALERT_READ_RECENT
+    else:
+        return random.random() < ALERT_READ_NEW
+
+
+def is_weekend(d: date) -> bool:
+    return d.weekday() >= 5
+
+
+def format_duration(minutes: float) -> str:
+    hours = int(minutes // 60)
+    mins = int(minutes % 60)
+    if hours > 0:
+        return f"{hours}h {mins}m"
+    return f"{mins} minutes"
+
+
+def get_night_cooling(hour: int) -> float:
+    """Return temperature offset for nighttime cooling (hours 0-6)."""
+    if 0 <= hour <= 6:
+        # Deepest cooling at 3-4am
+        depth = 1.0 - abs(hour - 3.5) / 3.5
+        return lerp(NIGHT_COOLING_MAX, NIGHT_COOLING_MIN, depth)
+    return 0.0
+
+
+# =============================================================================
+# Sensor Data Generation
+# =============================================================================
+
 def generate_sensor_reading(
-    base_temp: float = TEMP_OPTIMAL,
-    base_humidity: float = HUMIDITY_OPTIMAL,
-    base_noise: float = NOISE_OPTIMAL,
-    variance: float = 0.3,
-    spike_chance: float = 0.05,
+    progress: float,
+    hour: int,
+    weekend: bool,
 ) -> Dict[str, float]:
-    """Generate realistic sensor readings with occasional spikes."""
-    
+    """
+    Generate a single sensor reading with progressive improvement.
+    Earlier days (low progress) have worse baselines and more variance.
+    """
+    # Progressive baselines
+    base_temp = lerp(PROGRESSION["temp_start"], PROGRESSION["temp_end"], progress)
+    base_humidity = lerp(PROGRESSION["humidity_start"], PROGRESSION["humidity_end"], progress)
+    base_noise = lerp(PROGRESSION["noise_start"], PROGRESSION["noise_end"], progress)
+    variance = lerp(PROGRESSION["variance_start"], PROGRESSION["variance_end"], progress)
+    spike_chance = lerp(PROGRESSION["spike_chance_start"], PROGRESSION["spike_chance_end"], progress)
+
+    # Weekend adjustments
+    if weekend:
+        base_noise += WEEKEND_NOISE_BOOST
+        base_temp += WEEKEND_TEMP_BOOST
+
+    # Night cooling
+    base_temp += get_night_cooling(hour)
+
     # Normal variance
     temp = base_temp + random.gauss(0, variance * 2)
     humidity = base_humidity + random.gauss(0, variance * 5)
     noise = base_noise + random.gauss(0, variance * 3)
 
-    # Occasional spikes (these often cause awakenings)
+    # Occasional spikes
     if random.random() < spike_chance:
         spike_type = random.choice(["temp", "humidity", "noise"])
         if spike_type == "temp":
-            temp += random.uniform(2, 4)  # Temperature spike
+            temp += random.uniform(2, 4)
         elif spike_type == "humidity":
-            humidity += random.choice([-15, 15])  # Humidity change
+            humidity += random.choice([-15, 15])
         else:
-            noise += random.uniform(10, 20)  # Noise spike
-    
+            noise += random.uniform(10, 20)
+
     # Clamp to realistic ranges
     temp = max(TEMP_MIN, min(TEMP_MAX, temp))
     humidity = max(HUMIDITY_MIN, min(HUMIDITY_MAX, humidity))
     noise = max(NOISE_MIN, min(NOISE_MAX, noise))
-    
+
     return {
         "temp_celcius": round(temp, 1),
         "humidity": round(humidity, 1),
@@ -242,30 +357,42 @@ def generate_sensor_reading(
     }
 
 
-
 def generate_correlation_parameters(
-    before_readings: Dict[str, float],
-    after_readings: Dict[str, float],
+    all_readings: List[Dict[str, float]],
 ) -> Dict[str, Any]:
-    """Generate correlation parameters showing what changed before awakening."""
+    """
+    Generate correlation parameters using quartile comparison,
+    matching the real correlation_analyzer.py format.
+    Compares first 25% of readings vs last 25%.
+    """
+    if len(all_readings) < 4:
+        return {}
+
+    n = len(all_readings)
+    q_size = max(1, int(n * CORRELATION_QUARTILE_FRACTION))
+    first_quarter = all_readings[:q_size]
+    last_quarter = all_readings[-q_size:]
+
     parameters = {}
-    
+
     for key in ["temp_celcius", "humidity", "noise_decibel"]:
-        before = before_readings.get(key, 0)
-        after = after_readings.get(key, 0)
-        
-        if before > 0:
-            change_percent = ((after - before) / before) * 100
-            
-            # Only include if change is significant (>5%)
-            if abs(change_percent) > 5:
-                parameters[key] = {
-                    "before": before,
-                    "after": after,
-                    "change_percent": round(change_percent, 1),
-                    "direction": "increased" if change_percent > 0 else "decreased",
-                }
-    
+        start_avg = sum(r[key] for r in first_quarter) / len(first_quarter)
+        end_avg = sum(r[key] for r in last_quarter) / len(last_quarter)
+
+        if start_avg == 0:
+            continue
+
+        change_percent = ((end_avg - start_avg) / abs(start_avg)) * 100
+        threshold = CORRELATION_CHANGE_THRESHOLDS.get(key, 5.0)
+
+        if abs(change_percent) > threshold:
+            parameters[key] = {
+                "start_value": round(start_avg, 2),
+                "end_value": round(end_avg, 2),
+                "change_percent": round(change_percent, 2),
+                "direction": "increase" if change_percent > 0 else "decrease",
+            }
+
     return parameters
 
 
@@ -273,52 +400,403 @@ def generate_ai_insight(
     parameters: Dict[str, Any],
     baby_name: str,
 ) -> str:
-    """Generate an AI insight based on correlation parameters."""
     if not parameters:
         return f"{baby_name} woke up. Environmental conditions were stable - may be a developmental pattern or hunger."
-    
+
     insights = []
-    
+
     if "temp_celcius" in parameters:
         param = parameters["temp_celcius"]
-        if param["direction"] == "increased":
-            insights.append(f"Temperature rose from {param['before']}°C to {param['after']}°C")
+        if param["direction"] == "increase":
+            insights.append(f"Temperature rose from {param['start_value']}°C to {param['end_value']}°C")
         else:
-            insights.append(f"Temperature dropped from {param['before']}°C to {param['after']}°C")
-    
+            insights.append(f"Temperature dropped from {param['start_value']}°C to {param['end_value']}°C")
+
     if "noise_decibel" in parameters:
         param = parameters["noise_decibel"]
-        insights.append(f"Noise level changed to {param['after']}dB")
-    
+        insights.append(f"Noise level changed to {param['end_value']}dB")
+
     if "humidity" in parameters:
         param = parameters["humidity"]
-        if param["direction"] == "decreased":
+        if param["direction"] == "decrease":
             insights.append("Humidity dropped - air may be too dry")
         else:
             insights.append("Humidity increased significantly")
-    
+
     if insights:
         return f"{baby_name}: {'. '.join(insights)}. Consider adjusting room conditions."
-    
+
     return random.choice(AI_INSIGHT_TEMPLATES)
 
 
-def format_duration(minutes: float) -> str:
-    """Format duration in minutes to human-readable string."""
-    hours = int(minutes // 60)
-    mins = int(minutes % 60)
-    
-    if hours > 0:
-        return f"{hours}h {mins}m"
-    return f"{mins} minutes"
+def inject_sensor_drift(readings: List[Dict[str, float]]) -> None:
+    """
+    Mutate the last DRIFT_READINGS_COUNT readings to create a detectable
+    temperature or humidity drift (8-15% change) that crosses the 5% threshold.
+    Modifies readings in-place.
+    """
+    if len(readings) < DRIFT_READINGS_COUNT + 2:
+        return
+
+    # Choose drift parameter (temp or humidity — noise threshold is 100%, too hard)
+    drift_param = random.choice(["temp_celcius", "humidity"])
+
+    # Get baseline from readings before the drift zone
+    baseline_idx = len(readings) - DRIFT_READINGS_COUNT - 1
+    baseline_value = readings[baseline_idx][drift_param]
+
+    # Target 8-15% change
+    change_pct = random.uniform(0.08, 0.15)
+    direction = random.choice([1, -1])
+    target_value = baseline_value * (1 + change_pct * direction)
+
+    # Clamp target
+    if drift_param == "temp_celcius":
+        target_value = max(TEMP_MIN, min(TEMP_MAX, target_value))
+    else:
+        target_value = max(HUMIDITY_MIN, min(HUMIDITY_MAX, target_value))
+
+    # Gradually ramp over the last N readings
+    drift_start = len(readings) - DRIFT_READINGS_COUNT
+    for j in range(DRIFT_READINGS_COUNT):
+        t = (j + 1) / DRIFT_READINGS_COUNT
+        readings[drift_start + j][drift_param] = round(
+            lerp(baseline_value, target_value, t), 1
+        )
 
 
 # =============================================================================
-# Data Generation Functions
+# Sleep Session Building
+# =============================================================================
+
+def _build_sleep_windows(
+    day: date,
+    age_category: str,
+    weekend: bool,
+) -> Tuple[List[Tuple[datetime, datetime]], List[Tuple[datetime, datetime]]]:
+    """
+    Build night sleep window and nap windows for a given day.
+    Returns (night_windows, nap_windows).
+    Night window: previous evening bedtime -> morning wake.
+    """
+    schedule = SLEEP_SCHEDULES[age_category]
+    bedtime_h, bedtime_m = schedule["bedtime"]
+    wake_h, wake_m = schedule["wake_time"]
+
+    # Weekend shift
+    bed_shift = random.randint(WEEKEND_BEDTIME_SHIFT_MIN, WEEKEND_BEDTIME_SHIFT_MAX) if weekend else 0
+    wake_shift = random.randint(WEEKEND_BEDTIME_SHIFT_MIN, WEEKEND_BEDTIME_SHIFT_MAX) if weekend else 0
+
+    sleep_start = datetime.combine(
+        day - timedelta(days=1),
+        datetime.min.time().replace(hour=bedtime_h, minute=bedtime_m),
+    ) + timedelta(minutes=bed_shift + random.randint(-10, 10))
+
+    final_wake = datetime.combine(
+        day,
+        datetime.min.time().replace(hour=wake_h, minute=wake_m),
+    ) + timedelta(minutes=wake_shift + random.randint(-10, 10))
+
+    night_windows = [(sleep_start, final_wake)]
+
+    # Naps
+    nap_windows = []
+    for nap_start_time, nap_end_time in schedule["naps"]:
+        start_var = random.randint(-15, 15)
+        end_var = random.randint(-15, 15)
+
+        nap_start = datetime.combine(
+            day,
+            datetime.min.time().replace(hour=nap_start_time[0], minute=nap_start_time[1]),
+        ) + timedelta(minutes=start_var)
+
+        nap_end = datetime.combine(
+            day,
+            datetime.min.time().replace(hour=nap_end_time[0], minute=nap_end_time[1]),
+        ) + timedelta(minutes=end_var)
+
+        # Skip some naps randomly
+        if random.random() < 0.15:
+            continue
+
+        nap_windows.append((nap_start, nap_end))
+
+    return night_windows, nap_windows
+
+
+def _generate_session_data(
+    session_start: datetime,
+    session_end: datetime,
+    progress: float,
+    weekend: bool,
+    awakening_times: List[datetime],
+    baby_name: str,
+    inject_drifts: bool = True,
+    is_ongoing: bool = False,
+) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """
+    Generate sensor readings, awakening events, and alerts for one sleep session.
+    If is_ongoing=True, the last awakening_time is treated as "still sleeping" —
+    sensor data is generated up to it but no awakening event is created.
+    """
+    sensor_readings = []
+    awakening_events = []
+    alerts = []
+
+    current_time = session_start
+    seg_start = session_start
+    readings_in_segment: List[Dict] = []
+
+    for awk_idx, awake_time in enumerate(awakening_times):
+        is_last = (awk_idx == len(awakening_times) - 1)
+        skip_awakening = is_last and is_ongoing
+
+        # Generate readings until awakening / cutoff
+        while current_time < awake_time:
+            reading = generate_sensor_reading(
+                progress=progress,
+                hour=current_time.hour,
+                weekend=weekend,
+            )
+            reading["datetime"] = current_time
+            sensor_readings.append(reading)
+            readings_in_segment.append(reading)
+
+            # Alert conditions
+            if reading["temp_celcius"] > 24:
+                alerts.append({
+                    "type": "temperature",
+                    "title": "Room Too Warm",
+                    "message": f"Temperature reached {reading['temp_celcius']}°C in {baby_name}'s room.",
+                    "severity": "warning",
+                    "metadata": {"value": reading["temp_celcius"], "threshold": 24},
+                    "created_at": current_time,
+                })
+            elif reading["temp_celcius"] < 18:
+                alerts.append({
+                    "type": "temperature",
+                    "title": "Room Too Cold",
+                    "message": f"Temperature dropped to {reading['temp_celcius']}°C in {baby_name}'s room.",
+                    "severity": "warning",
+                    "metadata": {"value": reading["temp_celcius"], "threshold": 18},
+                    "created_at": current_time,
+                })
+
+            if reading["noise_decibel"] > 50:
+                alerts.append({
+                    "type": "noise",
+                    "title": "Noise Detected",
+                    "message": f"Noise level reached {reading['noise_decibel']}dB in {baby_name}'s room.",
+                    "severity": "info",
+                    "metadata": {"value": reading["noise_decibel"], "threshold": 50},
+                    "created_at": current_time,
+                })
+
+            current_time += timedelta(minutes=SENSOR_INTERVAL_MINUTES)
+
+        if skip_awakening:
+            # Baby is still sleeping — no awakening event
+            break
+
+        # Inject drift for ~40% of awakenings
+        if inject_drifts and random.random() < DRIFT_INJECTION_CHANCE and len(readings_in_segment) > DRIFT_READINGS_COUNT + 2:
+            inject_sensor_drift(readings_in_segment)
+
+        # Record awakening event
+        sleep_duration = (awake_time - seg_start).total_seconds() / 60
+        correlation_params = generate_correlation_parameters(readings_in_segment)
+        ai_insight = generate_ai_insight(correlation_params, baby_name)
+        last_reading = readings_in_segment[-1] if readings_in_segment else None
+
+        awakening_event = {
+            "sleep_started_at": seg_start.isoformat(),
+            "awakened_at": awake_time.isoformat(),
+            "sleep_duration_minutes": round(sleep_duration, 1),
+            "ai_insight": ai_insight,
+            "last_sensor_readings": {
+                "temp_celcius": last_reading["temp_celcius"],
+                "humidity": last_reading["humidity"],
+                "noise_decibel": last_reading["noise_decibel"],
+            } if last_reading else None,
+            "correlation_params": correlation_params,
+        }
+        awakening_events.append(awakening_event)
+
+        # Awakening alert
+        alerts.append({
+            "type": "awakening",
+            "title": f"{baby_name} Woke Up",
+            "message": f"{baby_name} woke up after {format_duration(sleep_duration)} of sleep.",
+            "severity": "info",
+            "metadata": {
+                "sleep_duration_minutes": sleep_duration,
+                "sleep_started_at": seg_start.isoformat(),
+            },
+            "created_at": awake_time,
+        })
+
+        # Baby goes back to sleep after short wake period
+        seg_start = awake_time + timedelta(minutes=random.randint(5, 20))
+        current_time = seg_start
+        readings_in_segment = []
+
+    return sensor_readings, awakening_events, alerts
+
+
+def generate_day_data(
+    baby_data: Dict,
+    day: date,
+    day_index: int,
+    is_today: bool = False,
+    force_currently_sleeping: bool = False,
+) -> Tuple[List[Dict], List[Dict], List[Dict], bool]:
+    """
+    Generate all sleep data for one day.
+    Returns: (sensor_readings, awakening_events, alerts, baby_is_sleeping_now)
+    """
+    age_category = baby_data["age_category"]
+    progress = get_progress_factor(day_index)
+    weekend = is_weekend(day)
+    baby_name = baby_data["first_name"]
+
+    night_windows, nap_windows = _build_sleep_windows(day, age_category, weekend)
+
+    all_readings = []
+    all_awakenings = []
+    all_alerts = []
+    baby_is_sleeping = False
+
+    # --- Night sleep ---
+    for sleep_start, final_wake in night_windows:
+        # Truncate for today
+        effective_end = min(final_wake, NOW) if is_today else final_wake
+        if sleep_start >= effective_end:
+            continue
+
+        num_awakenings = get_awakening_count(age_category, progress)
+        awakening_times = []
+
+        if num_awakenings > 0:
+            night_duration = (effective_end - sleep_start).total_seconds() / 60
+            segment_duration = night_duration / (num_awakenings + 1)
+            for i in range(num_awakenings):
+                awake_offset = segment_duration * (i + 1) + random.randint(-30, 30)
+                awake_time = sleep_start + timedelta(minutes=max(10, awake_offset))
+                if awake_time < effective_end:
+                    awakening_times.append(awake_time)
+
+        # Determine if baby is currently in this night sleep
+        is_ongoing = False
+        if is_today and sleep_start <= NOW <= final_wake:
+            # Baby is sleeping right now in night sleep
+            is_ongoing = True
+            baby_is_sleeping = True
+            awakening_times.append(NOW)  # sensor data up to NOW, no awakening
+        elif is_today and NOW < final_wake:
+            # NOW is before final_wake but after a potential awakening — truncate
+            awakening_times = [t for t in awakening_times if t <= NOW]
+            if not awakening_times or awakening_times[-1] < NOW:
+                # Add final wake only if it's before NOW
+                pass
+        else:
+            awakening_times.append(effective_end)  # final morning wake
+
+        if not awakening_times:
+            awakening_times.append(effective_end)
+
+        readings, awakenings, alerts = _generate_session_data(
+            session_start=sleep_start,
+            session_end=effective_end,
+            progress=progress,
+            weekend=weekend,
+            awakening_times=awakening_times,
+            baby_name=baby_name,
+            inject_drifts=True,
+            is_ongoing=is_ongoing,
+        )
+        all_readings.extend(readings)
+        all_awakenings.extend(awakenings)
+        all_alerts.extend(alerts)
+
+    # --- Naps ---
+    for nap_start, nap_end in nap_windows:
+        if is_today:
+            # Skip naps that haven't started yet
+            if nap_start > NOW:
+                # If force_currently_sleeping and baby isn't sleeping yet,
+                # shift this nap to start 10-20 min before NOW
+                if force_currently_sleeping and not baby_is_sleeping:
+                    nap_start = NOW - timedelta(minutes=random.randint(10, 20))
+                    nap_end = nap_start + timedelta(minutes=60)  # will be truncated
+                else:
+                    continue
+
+            effective_nap_end = min(nap_end, NOW)
+
+            is_nap_ongoing = (nap_start <= NOW <= nap_end)
+            if is_nap_ongoing:
+                baby_is_sleeping = True
+
+            if nap_start >= effective_nap_end and not is_nap_ongoing:
+                continue
+
+            awakening_times = []
+            if is_nap_ongoing:
+                awakening_times = [NOW]
+            else:
+                awakening_times = [effective_nap_end]
+
+            readings, awakenings, alerts = _generate_session_data(
+                session_start=nap_start,
+                session_end=effective_nap_end if not is_nap_ongoing else NOW,
+                progress=progress,
+                weekend=weekend,
+                awakening_times=awakening_times,
+                baby_name=baby_name,
+                inject_drifts=False,
+                is_ongoing=is_nap_ongoing,
+            )
+            all_readings.extend(readings)
+            all_awakenings.extend(awakenings)
+            all_alerts.extend(alerts)
+        else:
+            # Past day — full nap
+            readings, awakenings, alerts = _generate_session_data(
+                session_start=nap_start,
+                session_end=nap_end,
+                progress=progress,
+                weekend=weekend,
+                awakening_times=[nap_end],
+                baby_name=baby_name,
+                inject_drifts=False,
+                is_ongoing=False,
+            )
+            all_readings.extend(readings)
+            all_awakenings.extend(awakenings)
+            all_alerts.extend(alerts)
+
+    # If today and force_currently_sleeping but still not sleeping, create a session
+    if is_today and force_currently_sleeping and not baby_is_sleeping:
+        fake_start = NOW - timedelta(minutes=random.randint(10, 20))
+        reading_time = fake_start
+        readings_list = []
+        while reading_time < NOW:
+            reading = generate_sensor_reading(progress=progress, hour=reading_time.hour, weekend=weekend)
+            reading["datetime"] = reading_time
+            readings_list.append(reading)
+            reading_time += timedelta(minutes=SENSOR_INTERVAL_MINUTES)
+
+        all_readings.extend(readings_list)
+        baby_is_sleeping = True
+
+    return all_readings, all_awakenings, all_alerts, baby_is_sleeping
+
+
+# =============================================================================
+# Database Operations
 # =============================================================================
 
 async def truncate_tables(session):
-    """Truncate all tables in reverse dependency order."""
     tables = [
         "push_subscriptions",
         "alerts",
@@ -331,7 +809,7 @@ async def truncate_tables(session):
         "users",
         "babies",
     ]
-    
+
     print("Truncating tables...")
     for table in tables:
         try:
@@ -339,16 +817,15 @@ async def truncate_tables(session):
             print(f"  - Truncated {table}")
         except Exception as e:
             print(f"  - Warning: Could not truncate {table}: {e}")
-    
+
     await session.commit()
     print("Tables truncated.\n")
 
 
 async def seed_babies(session) -> List[int]:
-    """Seed babies table and return list of baby IDs."""
     print("Seeding babies...")
     baby_ids = []
-    
+
     for baby in BABIES_DATA:
         result = await session.execute(
             text('''
@@ -366,16 +843,15 @@ async def seed_babies(session) -> List[int]:
         baby_id = result.scalar()
         baby_ids.append(baby_id)
         print(f"  - Created baby: {baby['first_name']} {baby['last_name']} (ID: {baby_id})")
-    
+
     await session.commit()
     return baby_ids
 
 
 async def seed_users(session, baby_ids: List[int]) -> List[int]:
-    """Seed users table linked to babies."""
     print("Seeding users...")
     user_ids = []
-    
+
     for user in USERS_DATA:
         baby_id = baby_ids[user["baby_index"]]
         result = await session.execute(
@@ -395,24 +871,22 @@ async def seed_users(session, baby_ids: List[int]) -> List[int]:
         user_id = result.scalar()
         user_ids.append(user_id)
         print(f"  - Created user: {user['username']} (ID: {user_id}, baby_id: {baby_id})")
-    
+
     await session.commit()
     return user_ids
 
 
 async def seed_baby_notes(session, baby_ids: List[int]):
-    """Seed baby_notes table with multiple notes per baby."""
     print("Seeding baby notes...")
-    
+
     for i, baby_id in enumerate(baby_ids):
         baby = BABIES_DATA[i]
         notes = BABY_NOTES_DATA.get(baby["notes_theme"], [])
-        
+
         for note in notes:
-            # Randomize created_at within the past 30 days
             days_ago = random.randint(1, 30)
-            created_at = datetime.now() - timedelta(days=days_ago)
-            
+            created_at = NOW - timedelta(days=days_ago)
+
             await session.execute(
                 text('''
                     INSERT INTO "Nappi"."baby_notes" (baby_id, title, content, created_at, updated_at)
@@ -426,218 +900,10 @@ async def seed_baby_notes(session, baby_ids: List[int]):
                     "updated_at": created_at,
                 }
             )
-        
+
         print(f"  - Created {len(notes)} notes for baby {baby['first_name']}")
-    
+
     await session.commit()
-
-
-async def seed_sleep_data_for_day(
-    session,
-    baby_id: int,
-    baby_data: Dict,
-    day: date,
-    user_id: int,
-) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-    """
-    Generate sleep data for a single day.
-    Returns: (sensor_readings, awakening_events, alerts)
-    """
-    age_category = baby_data["age_category"]
-    schedule = SLEEP_SCHEDULES[age_category]
-    sensor_readings = []
-    awakening_events = []
-    alerts = []
-    
-    # Generate night sleep (previous evening to morning)
-    bedtime_hour, bedtime_min = schedule["bedtime"]
-    wake_hour, wake_min = schedule["wake_time"]
-    
-    # Night sleep starts previous day evening
-    sleep_start = datetime.combine(day - timedelta(days=1), datetime.min.time().replace(
-        hour=bedtime_hour, minute=bedtime_min
-    ))
-    final_wake = datetime.combine(day, datetime.min.time().replace(
-        hour=wake_hour, minute=wake_min
-    ))
-    
-    # Generate night awakenings
-    num_awakenings = random.randint(*schedule["awakenings_per_night"])
-    awakening_times = []
-    
-    if num_awakenings > 0:
-        # Distribute awakenings throughout the night
-        night_duration = (final_wake - sleep_start).total_seconds() / 60
-        segment_duration = night_duration / (num_awakenings + 1)
-        
-        for i in range(num_awakenings):
-            awake_offset = segment_duration * (i + 1) + random.randint(-30, 30)
-            awake_time = sleep_start + timedelta(minutes=awake_offset)
-            awakening_times.append(awake_time)
-    
-    # Add final morning wake
-    awakening_times.append(final_wake)
-    
-    # Generate sensor data and awakenings for night sleep
-    current_time = sleep_start
-    session_start = sleep_start
-    base_temp = TEMP_OPTIMAL + random.uniform(-1, 1)
-    base_humidity = HUMIDITY_OPTIMAL + random.uniform(-5, 5)
-    base_noise = NOISE_OPTIMAL + random.uniform(-3, 3)
-    
-    readings_before_awakening = []
-    
-    for awake_time in awakening_times:
-        # Generate readings until awakening
-        while current_time < awake_time:
-            # Gradually drift conditions and occasionally spike near awakenings
-            time_to_awakening = (awake_time - current_time).total_seconds() / 60
-            spike_chance = 0.15 if time_to_awakening < 30 else 0.03
-            
-            reading = generate_sensor_reading(
-                base_temp, base_humidity, base_noise,
-                spike_chance=spike_chance
-            )
-            reading["datetime"] = current_time
-            sensor_readings.append(reading)
-            readings_before_awakening.append(reading)
-            
-            # Check for alert conditions
-            if reading["temp_celcius"] > 24:
-                alerts.append({
-                    "type": "temperature",
-                    "title": "Room Too Warm",
-                    "message": f"Temperature reached {reading['temp_celcius']}°C in {baby_data['first_name']}'s room.",
-                    "severity": "warning",
-                    "metadata": {"value": reading["temp_celcius"], "threshold": 24},
-                    "created_at": current_time,
-                })
-            elif reading["temp_celcius"] < 18:
-                alerts.append({
-                    "type": "temperature",
-                    "title": "Room Too Cold",
-                    "message": f"Temperature dropped to {reading['temp_celcius']}°C in {baby_data['first_name']}'s room.",
-                    "severity": "warning",
-                    "metadata": {"value": reading["temp_celcius"], "threshold": 18},
-                    "created_at": current_time,
-                })
-            
-            if reading["noise_decibel"] > 50:
-                alerts.append({
-                    "type": "noise",
-                    "title": "Noise Detected",
-                    "message": f"Noise level reached {reading['noise_decibel']}dB in {baby_data['first_name']}'s room.",
-                    "severity": "info",
-                    "metadata": {"value": reading["noise_decibel"], "threshold": 50},
-                    "created_at": current_time,
-                })
-            
-            current_time += timedelta(minutes=SENSOR_INTERVAL_MINUTES)
-        
-        # Record awakening event
-        sleep_duration = (awake_time - session_start).total_seconds() / 60
-        
-        # Get readings for correlation (before and at awakening)
-        if len(readings_before_awakening) >= 2:
-            before_reading = readings_before_awakening[-6] if len(readings_before_awakening) >= 6 else readings_before_awakening[0]
-            after_reading = readings_before_awakening[-1]
-            correlation_params = generate_correlation_parameters(before_reading, after_reading)
-            ai_insight = generate_ai_insight(correlation_params, baby_data["first_name"])
-        else:
-            correlation_params = {}
-            ai_insight = f"{baby_data['first_name']} woke up naturally."
-        
-        last_reading = readings_before_awakening[-1] if readings_before_awakening else None
-        
-        awakening_event = {
-            "sleep_started_at": session_start.isoformat(),
-            "awakened_at": awake_time.isoformat(),
-            "sleep_duration_minutes": round(sleep_duration, 1),
-            "ai_insight": ai_insight,
-            "last_sensor_readings": {
-                "temp_celcius": last_reading["temp_celcius"] if last_reading else None,
-                "humidity": last_reading["humidity"] if last_reading else None,
-                "noise_decibel": last_reading["noise_decibel"] if last_reading else None,
-            } if last_reading else None,
-            "correlation_params": correlation_params,
-        }
-        awakening_events.append(awakening_event)
-
-        # Add awakening alert
-        alerts.append({
-            "type": "awakening",
-            "title": f"{baby_data['first_name']} Woke Up",
-            "message": f"{baby_data['first_name']} woke up after {format_duration(sleep_duration)} of sleep.",
-            "severity": "info",
-            "metadata": {
-                "sleep_duration_minutes": sleep_duration,
-                "sleep_started_at": session_start.isoformat(),
-            },
-            "created_at": awake_time,
-        })
-        
-        # Start new session (baby goes back to sleep after short wake period)
-        session_start = awake_time + timedelta(minutes=random.randint(5, 20))
-        current_time = session_start
-        readings_before_awakening = []
-    
-    # Generate nap data
-    for nap_start_time, nap_end_time in schedule["naps"]:
-        # Random variation in nap times
-        start_variation = random.randint(-15, 15)
-        end_variation = random.randint(-15, 15)
-        
-        nap_start = datetime.combine(day, datetime.min.time().replace(
-            hour=nap_start_time[0], minute=nap_start_time[1]
-        )) + timedelta(minutes=start_variation)
-        
-        nap_end = datetime.combine(day, datetime.min.time().replace(
-            hour=nap_end_time[0], minute=nap_end_time[1]
-        )) + timedelta(minutes=end_variation)
-        
-        # Skip some naps randomly (babies don't always nap on schedule)
-        if random.random() < 0.15:
-            continue
-        
-        # Generate sensor readings during nap
-        current_time = nap_start
-        readings_before_awakening = []
-        
-        while current_time < nap_end:
-            reading = generate_sensor_reading(
-                base_temp, base_humidity, base_noise
-            )
-            reading["datetime"] = current_time
-            sensor_readings.append(reading)
-            readings_before_awakening.append(reading)
-            current_time += timedelta(minutes=SENSOR_INTERVAL_MINUTES)
-        
-        # Record nap awakening
-        nap_duration = (nap_end - nap_start).total_seconds() / 60
-        last_reading = readings_before_awakening[-1] if readings_before_awakening else None
-        
-        if len(readings_before_awakening) >= 2:
-            before_reading = readings_before_awakening[0]
-            after_reading = readings_before_awakening[-1]
-            correlation_params = generate_correlation_parameters(before_reading, after_reading)
-        else:
-            correlation_params = {}
-        
-        awakening_event = {
-            "sleep_started_at": nap_start.isoformat(),
-            "awakened_at": nap_end.isoformat(),
-            "sleep_duration_minutes": round(nap_duration, 1),
-            "ai_insight": f"{baby_data['first_name']} completed a nap. Sleep quality was good.",
-            "last_sensor_readings": {
-                "temp_celcius": last_reading["temp_celcius"] if last_reading else None,
-                "humidity": last_reading["humidity"] if last_reading else None,
-                "noise_decibel": last_reading["noise_decibel"] if last_reading else None,
-            } if last_reading else None,
-            "correlation_params": correlation_params,
-        }
-        awakening_events.append(awakening_event)
-
-    return sensor_readings, awakening_events, alerts
 
 
 async def seed_sleep_realtime_data(
@@ -645,40 +911,51 @@ async def seed_sleep_realtime_data(
     baby_ids: List[int],
     user_ids: List[int],
 ):
-    """Generate 90 days of sleep data for all babies."""
-    print(f"Seeding {DAYS_OF_DATA} days of sleep data...")
-    
+    """Generate 90 days of progressive sleep data for all babies."""
+    print(f"\nSeeding {DAYS_OF_DATA} days of sleep data (ending at {NOW.strftime('%Y-%m-%d %H:%M')})...")
+
     all_sensor_data = {baby_id: [] for baby_id in baby_ids}
     all_awakenings = {baby_id: [] for baby_id in baby_ids}
-    all_alerts = {baby_id: [] for baby_id in baby_ids}
-    
+    currently_sleeping = {}
+
     for i, baby_id in enumerate(baby_ids):
         baby_data = BABIES_DATA[i]
         user_id = user_ids[i]
-        
+        is_demo_baby = (i == 0)  # Emma is the demo baby
+
         print(f"\n  Generating data for {baby_data['first_name']}...")
-        
-        for day_offset in range(DAYS_OF_DATA):
-            day = date.today() - timedelta(days=day_offset)
-            
-            sensor_readings, awakenings, alerts = await seed_sleep_data_for_day(
-                session, baby_id, baby_data, day, user_id
+
+        baby_alerts = []
+
+        for day_index in range(DAYS_OF_DATA):
+            # day_index 0 = oldest day (90 days ago), day_index 89 = today
+            day = (NOW - timedelta(days=DAYS_OF_DATA - 1 - day_index)).date()
+            is_today = (day == NOW.date())
+
+            sensor_readings, awakenings, alerts, baby_sleeping = generate_day_data(
+                baby_data=baby_data,
+                day=day,
+                day_index=day_index,
+                is_today=is_today,
+                force_currently_sleeping=(is_today and is_demo_baby),
             )
-            
+
             all_sensor_data[baby_id].extend(sensor_readings)
             all_awakenings[baby_id].extend(awakenings)
-            all_alerts[baby_id].extend(alerts)
-            
-            if day_offset % 30 == 0:
-                print(f"    - Processed {day_offset + 1}/{DAYS_OF_DATA} days")
-        
-        # Insert sensor data in batches for better performance
+            baby_alerts.extend(alerts)
+
+            if is_today and baby_sleeping:
+                currently_sleeping[baby_id] = True
+
+            if (day_index + 1) % 30 == 0:
+                print(f"    - Processed {day_index + 1}/{DAYS_OF_DATA} days")
+
+        # Insert sensor data in batches
         sensor_data = all_sensor_data[baby_id]
-        print(f"    - Inserting {len(sensor_data)} sensor readings in batches of {BATCH_SIZE}...")
+        print(f"    - Inserting {len(sensor_data)} sensor readings...")
         for batch_start in range(0, len(sensor_data), BATCH_SIZE):
             batch = sensor_data[batch_start:batch_start + BATCH_SIZE]
             if batch:
-                # Build batch insert values
                 values_list = []
                 params = {"baby_id": baby_id}
                 for idx, reading in enumerate(batch):
@@ -697,15 +974,15 @@ async def seed_sleep_realtime_data(
                     '''),
                     params
                 )
-            if batch_start % 2000 == 0 and batch_start > 0:
+            if batch_start % 5000 == 0 and batch_start > 0:
                 print(f"      - Inserted {batch_start}/{len(sensor_data)} readings...")
                 await session.commit()
-        
-        # Insert awakening events
+
+        # Insert awakening events and correlations
         print(f"    - Inserting {len(all_awakenings[baby_id])} awakening events...")
         for event in all_awakenings[baby_id]:
             correlation_params = event.pop("correlation_params", {})
-            
+
             result = await session.execute(
                 text('''
                     INSERT INTO "Nappi"."awakening_events" (baby_id, event_metadata)
@@ -718,8 +995,7 @@ async def seed_sleep_realtime_data(
                 }
             )
             event_id = result.scalar()
-            
-            # Insert correlation if we have parameters
+
             if correlation_params:
                 awakened_at = datetime.fromisoformat(event["awakened_at"])
                 await session.execute(
@@ -734,25 +1010,27 @@ async def seed_sleep_realtime_data(
                         "extra_data": event.get("ai_insight", ""),
                     }
                 )
-        
-        # Insert alerts in batches (limit to avoid too many)
-        alerts_to_insert = all_alerts[baby_id][:100]  # Cap at 100 alerts per baby
-        print(f"    - Inserting {len(alerts_to_insert)} alerts...")
-        for batch_start in range(0, len(alerts_to_insert), 50):
-            batch = alerts_to_insert[batch_start:batch_start + 50]
+
+        # Insert alerts (no cap, age-based read status)
+        print(f"    - Inserting {len(baby_alerts)} alerts...")
+        for batch_start in range(0, len(baby_alerts), 50):
+            batch = baby_alerts[batch_start:batch_start + 50]
             if batch:
                 values_list = []
                 params = {"baby_id": baby_id, "user_id": user_id}
                 for idx, alert in enumerate(batch):
-                    values_list.append(f"(:baby_id, :user_id, :type{idx}, :title{idx}, :msg{idx}, :sev{idx}, CAST(:meta{idx} AS jsonb), :read{idx}, :cat{idx})")
+                    values_list.append(
+                        f"(:baby_id, :user_id, :type{idx}, :title{idx}, :msg{idx}, "
+                        f":sev{idx}, CAST(:meta{idx} AS jsonb), :read{idx}, :cat{idx})"
+                    )
                     params[f"type{idx}"] = alert["type"]
                     params[f"title{idx}"] = alert["title"]
                     params[f"msg{idx}"] = alert["message"]
                     params[f"sev{idx}"] = alert["severity"]
                     params[f"meta{idx}"] = json.dumps(alert.get("metadata", {}))
-                    params[f"read{idx}"] = random.random() < 0.7
+                    params[f"read{idx}"] = get_alert_read_status(alert["created_at"])
                     params[f"cat{idx}"] = alert["created_at"]
-                
+
                 values_sql = ", ".join(values_list)
                 await session.execute(
                     text(f'''
@@ -762,10 +1040,10 @@ async def seed_sleep_realtime_data(
                     '''),
                     params
                 )
-        
+
         await session.commit()
-    
-    return all_sensor_data, all_awakenings
+
+    return all_sensor_data, all_awakenings, currently_sleeping
 
 
 async def seed_daily_summaries(
@@ -774,22 +1052,22 @@ async def seed_daily_summaries(
     all_sensor_data: Dict[int, List[Dict]],
     all_awakenings: Dict[int, List[Dict]],
 ):
-    """Compute and insert daily summaries for each baby."""
+    """Compute and insert exactly 90 continuous daily summaries per baby."""
     print("\nSeeding daily summaries...")
-    
+
     for i, baby_id in enumerate(baby_ids):
         baby_data = BABIES_DATA[i]
         sensor_data = all_sensor_data[baby_id]
         awakenings = all_awakenings[baby_id]
-        
-        # Group data by date
+
+        # Group sensor data by date
         data_by_date: Dict[date, List[Dict]] = {}
         for reading in sensor_data:
             reading_date = reading["datetime"].date()
             if reading_date not in data_by_date:
                 data_by_date[reading_date] = []
             data_by_date[reading_date].append(reading)
-        
+
         # Group awakenings by date
         awakenings_by_date: Dict[date, List[Dict]] = {}
         for event in awakenings:
@@ -798,34 +1076,46 @@ async def seed_daily_summaries(
             if event_date not in awakenings_by_date:
                 awakenings_by_date[event_date] = []
             awakenings_by_date[event_date].append(event)
-        
+
+        # Ensure exactly 90 continuous days
         summaries_created = 0
-        for summary_date, readings in data_by_date.items():
-            if not readings:
-                continue
-            
-            # Calculate averages
-            avg_temp = sum(r["temp_celcius"] for r in readings) / len(readings)
-            avg_humidity = sum(r["humidity"] for r in readings) / len(readings)
-            avg_noise = sum(r["noise_decibel"] for r in readings) / len(readings)
-            
+        prev_avg_temp = 21.0
+        prev_avg_humidity = 50.0
+        prev_avg_noise = 35.0
+
+        for day_index in range(DAYS_OF_DATA):
+            summary_date = (NOW - timedelta(days=DAYS_OF_DATA - 1 - day_index)).date()
+            readings = data_by_date.get(summary_date, [])
+
+            if readings:
+                avg_temp = sum(r["temp_celcius"] for r in readings) / len(readings)
+                avg_humidity = sum(r["humidity"] for r in readings) / len(readings)
+                avg_noise = sum(r["noise_decibel"] for r in readings) / len(readings)
+                prev_avg_temp = avg_temp
+                prev_avg_humidity = avg_humidity
+                prev_avg_noise = avg_noise
+            else:
+                # Carry forward previous day's values
+                avg_temp = prev_avg_temp
+                avg_humidity = prev_avg_humidity
+                avg_noise = prev_avg_noise
+
             # Count awakenings by time period
             day_awakenings = awakenings_by_date.get(summary_date, [])
             morning_awakes = 0
             noon_awakes = 0
             night_awakes = 0
-            
+
             for event in day_awakenings:
                 awakened_at = datetime.fromisoformat(event["awakened_at"])
                 hour = awakened_at.hour
-                
                 if 6 <= hour < 12:
                     morning_awakes += 1
                 elif 12 <= hour < 18:
                     noon_awakes += 1
                 else:
                     night_awakes += 1
-            
+
             await session.execute(
                 text('''
                     INSERT INTO "Nappi"."daily_summary"
@@ -846,9 +1136,9 @@ async def seed_daily_summaries(
                 }
             )
             summaries_created += 1
-        
+
         print(f"  - Created {summaries_created} daily summaries for {baby_data['first_name']}")
-    
+
     await session.commit()
 
 
@@ -856,20 +1146,65 @@ async def seed_optimal_stats(
     session,
     baby_ids: List[int],
     all_sensor_data: Dict[int, List[Dict]],
+    all_awakenings: Dict[int, List[Dict]],
 ):
-    """Compute and insert optimal stats for each baby."""
+    """
+    Compute optimal stats using weighted formula:
+    weight = 1 / (OPTIMAL_STATS_WEIGHT_BASE + total_awakenings_that_day)
+    optimal = sum(value * weight) / sum(weight)
+    """
     print("\nSeeding optimal stats...")
-    
+
     for i, baby_id in enumerate(baby_ids):
         baby_data = BABIES_DATA[i]
         sensor_data = all_sensor_data[baby_id]
+        awakenings = all_awakenings[baby_id]
+
         if not sensor_data:
             continue
-        
-        # Average all sensor readings for optimal stats
-        optimal_temp = sum(r["temp_celcius"] for r in sensor_data) / len(sensor_data)
-        optimal_humidity = sum(r["humidity"] for r in sensor_data) / len(sensor_data)
-        optimal_noise = sum(r["noise_decibel"] for r in sensor_data) / len(sensor_data)
+
+        # Group sensor data by date
+        data_by_date: Dict[date, List[Dict]] = {}
+        for reading in sensor_data:
+            reading_date = reading["datetime"].date()
+            if reading_date not in data_by_date:
+                data_by_date[reading_date] = []
+            data_by_date[reading_date].append(reading)
+
+        # Count awakenings per date
+        awakenings_per_date: Dict[date, int] = {}
+        for event in awakenings:
+            awakened_at = datetime.fromisoformat(event["awakened_at"])
+            event_date = awakened_at.date()
+            awakenings_per_date[event_date] = awakenings_per_date.get(event_date, 0) + 1
+
+        # Weighted average
+        weighted_temp = 0.0
+        weighted_humidity = 0.0
+        weighted_noise = 0.0
+        total_weight = 0.0
+
+        for d, readings in data_by_date.items():
+            total_awk = awakenings_per_date.get(d, 0)
+            weight = 1.0 / (OPTIMAL_STATS_WEIGHT_BASE + total_awk)
+
+            day_avg_temp = sum(r["temp_celcius"] for r in readings) / len(readings)
+            day_avg_humidity = sum(r["humidity"] for r in readings) / len(readings)
+            day_avg_noise = sum(r["noise_decibel"] for r in readings) / len(readings)
+
+            weighted_temp += day_avg_temp * weight
+            weighted_humidity += day_avg_humidity * weight
+            weighted_noise += day_avg_noise * weight
+            total_weight += weight
+
+        if total_weight > 0:
+            optimal_temp = weighted_temp / total_weight
+            optimal_humidity = weighted_humidity / total_weight
+            optimal_noise = weighted_noise / total_weight
+        else:
+            optimal_temp = 21.0
+            optimal_humidity = 50.0
+            optimal_noise = 35.0
 
         await session.execute(
             text('''
@@ -884,20 +1219,25 @@ async def seed_optimal_stats(
                 "noise": round(optimal_noise, 1),
             }
         )
-        
+
         print(f"  - Created optimal stats for {baby_data['first_name']}: "
               f"temp={round(optimal_temp, 1)}°C, humidity={round(optimal_humidity, 1)}%, "
               f"noise={round(optimal_noise, 1)}dB")
-    
+
     await session.commit()
 
 
-async def print_validation_summary(session):
+async def print_validation_summary(session, currently_sleeping: Dict[int, bool]):
     """Print summary of seeded data for validation."""
     print("\n" + "=" * 60)
     print("VALIDATION SUMMARY")
     print("=" * 60)
-    
+
+    start_date = (NOW - timedelta(days=DAYS_OF_DATA - 1)).date()
+    print(f"  Date range: {start_date} -> {NOW.strftime('%Y-%m-%d %H:%M')}")
+    print(f"  Progress: day 1 (oldest) -> day {DAYS_OF_DATA} (now)")
+    print()
+
     tables = [
         ("babies", "baby profiles"),
         ("users", "user accounts"),
@@ -909,12 +1249,42 @@ async def print_validation_summary(session):
         ("optimal_stats", "optimal stats"),
         ("alerts", "alerts"),
     ]
-    
+
     for table, description in tables:
         result = await session.execute(text(f'SELECT COUNT(*) FROM "Nappi"."{table}"'))
         count = result.scalar()
         print(f"  {description:.<30} {count:>8}")
-    
+
+    # Show currently sleeping status
+    print()
+    for baby_id, sleeping in currently_sleeping.items():
+        if sleeping:
+            print(f"  Baby ID {baby_id} is CURRENTLY SLEEPING (live dashboard active)")
+
+    # Show progression stats
+    print()
+    result = await session.execute(text('''
+        SELECT summary_date, avg_temp, avg_humidity, avg_noise
+        FROM "Nappi"."daily_summary"
+        WHERE baby_id = (SELECT MIN(id) FROM "Nappi"."babies")
+        ORDER BY summary_date ASC
+        LIMIT 1
+    '''))
+    first = result.fetchone()
+    result = await session.execute(text('''
+        SELECT summary_date, avg_temp, avg_humidity, avg_noise
+        FROM "Nappi"."daily_summary"
+        WHERE baby_id = (SELECT MIN(id) FROM "Nappi"."babies")
+        ORDER BY summary_date DESC
+        LIMIT 1
+    '''))
+    last = result.fetchone()
+
+    if first and last:
+        print(f"  Progression (Emma, demo baby):")
+        print(f"    Day 1  ({first[0]}): temp={first[1]}°C, humidity={first[2]}%, noise={first[3]}dB")
+        print(f"    Day 90 ({last[0]}): temp={last[1]}°C, humidity={last[2]}%, noise={last[3]}dB")
+
     print("\n" + "-" * 60)
     print("Demo Login Credentials:")
     print("-" * 60)
@@ -933,48 +1303,50 @@ async def seed_database():
     print("NAPPI DEMO DATA SEEDER")
     print("=" * 60)
     print(f"WARNING: This will DELETE all existing data!")
-    print(f"Generating {DAYS_OF_DATA} days of data for {len(BABIES_DATA)} babies...")
+    print(f"Generating {DAYS_OF_DATA} days of progressive data for {len(BABIES_DATA)} babies...")
+    print(f"Time anchor: {NOW.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Demo baby (Emma) will be currently sleeping at script time.")
     print("=" * 60 + "\n")
-    
-    # Set random seed for reproducibility
+
     set_seed(SEED)
-    
-    # Connect to database
+
     db = get_database()
     await db.connect(settings.DATABASE_URL)
-    
+
     try:
         async with db.session() as session:
             # 1. Truncate all tables
             await truncate_tables(session)
-            
+
             # 2. Seed babies
             baby_ids = await seed_babies(session)
-            
+
             # 3. Seed users linked to babies
             user_ids = await seed_users(session, baby_ids)
-            
+
             # 4. Seed baby notes
             await seed_baby_notes(session, baby_ids)
-            
+
             # 5. Seed sleep data (sensor readings, awakenings, correlations, alerts)
-            all_sensor_data, all_awakenings = await seed_sleep_realtime_data(
+            all_sensor_data, all_awakenings, currently_sleeping = await seed_sleep_realtime_data(
                 session, baby_ids, user_ids
             )
-            
-            # 6. Seed daily summaries
+
+            # 6. Seed daily summaries (90 continuous rows per baby)
             await seed_daily_summaries(
                 session, baby_ids, all_sensor_data, all_awakenings
             )
-            
-            # 7. Seed optimal stats
-            await seed_optimal_stats(session, baby_ids, all_sensor_data)
-            
+
+            # 7. Seed optimal stats (weighted formula)
+            await seed_optimal_stats(
+                session, baby_ids, all_sensor_data, all_awakenings
+            )
+
             # 8. Print validation summary
-            await print_validation_summary(session)
-        
+            await print_validation_summary(session, currently_sleeping)
+
         print("\nSeeding completed successfully!")
-        
+
     except Exception as e:
         print(f"\nError during seeding: {e}")
         raise

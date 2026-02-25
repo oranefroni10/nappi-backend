@@ -1,9 +1,23 @@
 """
 Centralized constants for the Nappi baby sleep monitoring system.
 
-All domain thresholds, limits, and reference data are defined here with source citations.
-Every value is backed by peer-reviewed research, clinical guidelines, or recognized
-professional organizations. See inline comments for full citations.
+All domain thresholds, limits, and reference data are defined here.
+Evidence strength varies: some values are peer-reviewed and directly verified, while
+others are clinical heuristics or web-guideline based. See inline provenance notes.
+
+Validation status (checked against local folder: /Users/oranefroni/Desktop/Research articles):
+- Directly verified in local PDFs and used by constants:
+  Franco 2001, Wailoo 1989, Hugh 2014, Sadeh 2009, Bhargava 2011, Tham 2017.
+- Reviewed but mostly contextual / not directly backing numeric constants:
+  AASM review 2006 (behavioral treatment), Sleep and Infant Learning 2011, Digital Health Tools 2022.
+- Not present as primary source in local PDFs (needs separate web/source check):
+  AAP website guidance, EPA humidity guidance, Cleveland Clinic pages, NSF/AASM primary consensus docs.
+
+UNSURE-SOURCE MAP (keep values, verify later):
+- AAP website-based temperature/humidity wording.
+- EPA humidity range wording.
+- Cleveland Clinic wake windows and bedtime ranges.
+- NSF/AASM primary consensus documents (exact bins and chart labels in this file).
 
 IMPORTANT: Do NOT scatter magic numbers across service files. Import from here.
 """
@@ -16,9 +30,16 @@ IMPORTANT: Do NOT scatter magic numbers across service files. Import from here.
 # Source: AAP (American Academy of Pediatrics) recommends 20-22.2°C (68-72°F).
 #   - https://www.aap.org (safe sleep guidelines)
 # Source: Wailoo et al., "The thermal environment in which 3-4 month old infants
-#   sleep at home," Archives of Disease in Childhood, 1989 — thermal neutrality 20-22°C.
+#   sleep at home," Archives of Disease in Childhood, 1989 — observed mean bedroom
+#   temperature of 18.4°C at bedtime, falling to ~14°C overnight in UK homes.
 # Source: Franco et al., "Ambient Temperature is Associated with Changes in Infants'
-#   Arousability from Sleep," Sleep, 2001 — at 24°C arousability increases.
+#   Arousability from Sleep," Sleep, 2001 — thermal neutrality defined as 20-22°C
+#   (p.326, citing Ponsonby 1992 & Wigfield 1993). At 24°C arousal thresholds
+#   decrease in REM sleep (infants arouse more easily, p=.017), especially between
+#   03:00-06:00. At 28°C arousal is blunted, which is a SIDS risk factor.
+# NOTE (verification): AAP webpage citation was not in local PDFs; local article support
+# for thermal-neutral values is from Franco 2001 (20-22°C) and contextual home data from
+# Wailoo 1989.
 # Alert boundaries are set slightly wider than the optimal range to avoid
 # over-alerting while still catching genuinely unsafe conditions.
 TEMP_ALERT_HIGH_C = 26.0   # Alert if room exceeds this
@@ -26,16 +47,20 @@ TEMP_ALERT_LOW_C = 18.0    # Alert if room drops below this
 
 # Optimal temperature range used for environment status assessment.
 # Narrower than alert thresholds — represents ideal conditions.
-# Source: AAP recommends 20-22.2°C; Franco et al. 2001 shows 24°C increases arousability.
+# Source: AAP recommends 20-22.2°C; Franco et al. 2001 defines thermal neutrality
+#   as 20-22°C and shows arousal thresholds decrease at 24°C (easier to arouse).
 TEMP_OPTIMAL_HIGH_C = 24.0
 TEMP_OPTIMAL_LOW_C = 20.0
 
 # Humidity safe range for infant sleep (%).
-# Source: AAP recommends 40-60% for infants under one year.
+# Source: AAP-style pediatric guidance commonly cites 40-60% for comfort/safety.
 #   - Prevents dryness (chapped lips, dry skin, irritated nasal passages) below 40%.
 #   - Above 60% encourages mold growth and dust mites.
 # Source: EPA indoor air quality guidelines also recommend 30-50% relative humidity.
-# Alert boundaries match AAP guidance; optimal is the tighter EPA range.
+# NOTE (verification): These AAP/EPA humidity references are NOT in the local research
+# folder PDFs and should be re-verified against primary web/guideline sources.
+# Alert boundaries are intentionally wider than the AAP-style 40-60 comfort range.
+# The 30% low alert is a conservative dry-air warning and should be externally re-verified.
 HUMIDITY_ALERT_HIGH_PCT = 60.0   # Alert if humidity exceeds this
 HUMIDITY_ALERT_LOW_PCT = 30.0    # Alert if humidity drops below this
 HUMIDITY_OPTIMAL_HIGH_PCT = 60.0
@@ -43,8 +68,9 @@ HUMIDITY_OPTIMAL_LOW_PCT = 40.0
 
 # Noise level limit for infant sleep (dB A-weighted).
 # Source: Hugh et al., "Infant Sleep Machines and Hazardous Sound Pressure Levels,"
-#   Pediatrics, 2014 — hospital nursery recommendation: average 50 dB over 1 hour.
-#   13 of 14 infant sleep machines exceeded 50 dB at 100cm.
+#   Pediatrics, 2014 — hospital nursery recommendation: average 50 dBA over 1 hour.
+#   All 14 infant sleep machines exceeded 50 dBA at 30cm and 100cm;
+#   13 of 14 exceeded 50 dBA at 200cm (p.679).
 NOISE_ALERT_HIGH_DB = 50.0   # Alert if noise exceeds this
 
 
@@ -53,13 +79,15 @@ NOISE_ALERT_HIGH_DB = 50.0   # Alert if noise exceeds this
 # =============================================================================
 
 # These represent the ideal ranges communicated to the AI for insight generation.
-# Source: Same as above — AAP, Wailoo 1989, Franco 2001, Hugh 2014.
+# Source map:
+# - Temperature/noise: directly supported by Franco 2001 and Hugh 2014.
+# - Humidity: based on external guideline claims (AAP/EPA style ranges), pending re-check.
 HEALTHY_RANGES = {
     "temp_celcius": {
         "name": "Temperature",
         "unit": "°C",
-        "min": TEMP_OPTIMAL_LOW_C,    # 20°C — AAP + Wailoo 1989
-        "max": TEMP_OPTIMAL_HIGH_C,   # 24°C — Franco 2001 arousability threshold
+        "min": TEMP_OPTIMAL_LOW_C,    # 20°C — AAP + Franco 2001 thermal neutrality
+        "max": TEMP_OPTIMAL_HIGH_C,   # 24°C — Franco 2001 arousal threshold boundary
     },
     "humidity": {
         "name": "Humidity",
@@ -181,10 +209,16 @@ PATTERN_AFTERNOON_END = 17
 #   study," Journal of Sleep Research, 2009 — Table 2.
 # Source: Bhargava, "Diagnosis and Management of Common Sleep Problems in Children,"
 #   Pediatrics in Review, 2011 — Table 1.
+# Source: Tham et al., "Infant sleep and its relation with cognition and growth: a
+#   narrative review," 2017 — reproduces NSF age ranges and sleep context.
+# NOTE (verification): In the local folder, Sadeh 2009 and Bhargava 2011 were verified.
+# NSF/AASM primary documents are not in the local folder, and the exact per-bin values
+# below should be treated as synthesized guidance until those are re-checked.
+# Current month-bin splits (e.g., 4-6, 7-12) are product-level interpolation.
 # Format: (age_min_months, age_max_months): (min_hours, max_hours, typical_naps, night_hours)
 AGE_SLEEP_RECOMMENDATIONS = {
-    (0, 3):   {"min_hours": 14, "max_hours": 17, "typical_naps": "4-5", "night_hours": "8-9"},
-    (4, 6):   {"min_hours": 12, "max_hours": 16, "typical_naps": "3-4", "night_hours": "9-10"},
+    (0, 3):   {"min_hours": 14, "max_hours": 17, "typical_naps": "3-5", "night_hours": "8-9"},
+    (4, 6):   {"min_hours": 12, "max_hours": 15, "typical_naps": "2-3", "night_hours": "9-10"},
     (7, 12):  {"min_hours": 12, "max_hours": 15, "typical_naps": "2-3", "night_hours": "10-11"},
     (13, 24): {"min_hours": 11, "max_hours": 14, "typical_naps": "1-2", "night_hours": "10-12"},
     (25, 36): {"min_hours": 10, "max_hours": 13, "typical_naps": "0-1", "night_hours": "10-12"},
@@ -198,6 +232,8 @@ AGE_SLEEP_RECOMMENDATIONS = {
 # Recommended awake time between sleep sessions (hours) by age.
 # Source: Cleveland Clinic, "Wake Windows by Age,"
 #   https://health.clevelandclinic.org/wake-windows-by-age
+# NOTE (verification): Cleveland Clinic source is not in the local research folder.
+# Values marked "extrapolated" are intentionally heuristic and need clinical review.
 # Format: (age_min_months, age_max_months): (min_hours, max_hours)
 WAKE_WINDOWS = {
     (0, 1):   (0.5, 1.0),    # Birth to 1 month: 30-60 min
@@ -220,6 +256,8 @@ WAKE_WINDOWS = {
 # Source: Cleveland Clinic, "Sleep in Your Baby's First Year,"
 #   https://my.clevelandclinic.org/health/articles/14300-sleep-in-your-babys-first-year
 # Source: AAP safe sleep guidelines.
+# NOTE (verification): These source pages are not in the local folder and should be
+# re-verified from the original pages/guidelines.
 # Format: (age_min_months, age_max_months): (earliest_hour, earliest_min, latest_hour, latest_min)
 TYPICAL_BEDTIMES = {
     (0, 3):   (20, 0, 23, 0),    # 8:00 PM - 11:00 PM
@@ -325,6 +363,8 @@ GEMINI_TIP_MAX_TOKENS = 150
 # Daily sleep duration color coding thresholds (hours).
 # Source: NSF recommendations — 12+ hours is excellent for most infants,
 #   10-12 is adequate, <10 is below recommended.
+# NOTE (verification): This color labeling is product interpretation, not a direct
+# threshold table from the local PDFs; keep as heuristic until primary NSF source check.
 SLEEP_EXCELLENT_THRESHOLD_HOURS = 12
 SLEEP_GOOD_THRESHOLD_HOURS = 10
 

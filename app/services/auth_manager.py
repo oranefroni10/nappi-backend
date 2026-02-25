@@ -27,12 +27,12 @@ class AuthManager:
         password: str,
         first_name: str,
         last_name: str,
-        baby_first_name: str,
-        baby_birthdate: date
+        baby_first_name: Optional[str] = None,
+        baby_birthdate: Optional[date] = None,
     ) -> Tuple[User, Optional[Babies], bool]:
         """
-        Register user and check for existing baby.
-        Searches for baby using: baby_first_name + user's last_name + baby_birthdate
+        Register user and optionally check for existing baby.
+        If baby_first_name and baby_birthdate are provided, searches for a matching baby.
         Returns: (user, baby, baby_was_found)
         Raises: ValueError if username exists
         """
@@ -45,26 +45,26 @@ class AuthManager:
             if result.first():
                 raise ValueError("Username already exists")
             
-            # Search for baby using baby's first name + user's last name + birthdate
-            baby_result = await session.execute(
-                text('''
-                    SELECT id, first_name, last_name, birthdate, gender, created_at
-                    FROM "Nappi"."babies"
-                    WHERE first_name = :first_name 
-                    AND last_name = :last_name 
-                    AND birthdate = :birthdate
-                '''),
-                {
-                    "first_name": baby_first_name,
-                    "last_name": last_name,
-                    "birthdate": baby_birthdate
-                }
-            )
-            baby_row = baby_result.mappings().first()
+            baby_row = None
+            if baby_first_name and baby_birthdate:
+                baby_result = await session.execute(
+                    text('''
+                        SELECT id, first_name, last_name, birthdate, gender, created_at
+                        FROM "Nappi"."babies"
+                        WHERE first_name = :first_name 
+                        AND last_name = :last_name 
+                        AND birthdate = :birthdate
+                    '''),
+                    {
+                        "first_name": baby_first_name,
+                        "last_name": last_name,
+                        "birthdate": baby_birthdate
+                    }
+                )
+                baby_row = baby_result.mappings().first()
             
             baby_id = baby_row["id"] if baby_row else None
             
-            # Create user with first_name and last_name
             user_result = await session.execute(
                 text('''
                     INSERT INTO "Nappi"."users" (username, password, first_name, last_name, baby_id)
