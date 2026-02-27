@@ -1,12 +1,4 @@
-"""
-Statistics API Endpoints - Provides data for the Statistics page graphs.
-
-Endpoints:
-- GET /stats/sensors - Sensor averages over time (from daily_summary)
-- GET /stats/sleep-patterns - Sleep time patterns with clustering (from awakening_events)
-- GET /stats/daily-sleep - Daily sleep totals (from awakening_events)
-- GET /stats/insights - AI-powered sleep insights from Gemini
-"""
+"""Stats API — sensor, sleep, trends, AI insights."""
 
 import asyncio
 import logging
@@ -59,28 +51,27 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stats", tags=["statistics"])
 
-# Validation constants — from centralized constants
+# Validation constants from STATS_MIN_DAYS / STATS_MAX_DAYS
 MIN_DAYS = STATS_MIN_DAYS
 MAX_DAYS = STATS_MAX_DAYS
 
 
-# Used by: get_sensor_stats, get_daily_sleep — validates date range bounds (7-90 days)
+# Used by: get_sensor_stats, get_daily_sleep — 7–90 day bounds
 def validate_date_range(start_date: date, end_date: date) -> None:
-    """Validate date range is within allowed bounds."""
     if end_date < start_date:
         raise HTTPException(
             status_code=400,
             detail="end_date must be after start_date"
         )
-    
+
     days_diff = (end_date - start_date).days
-    
+
     if days_diff < MIN_DAYS:
         raise HTTPException(
             status_code=400,
             detail=f"Date range must be at least {MIN_DAYS} days"
         )
-    
+
     if days_diff > MAX_DAYS:
         raise HTTPException(
             status_code=400,
@@ -88,12 +79,11 @@ def validate_date_range(start_date: date, end_date: date) -> None:
         )
 
 
-# Used by: All stats endpoints — validates baby exists before querying data
+# Used by: all stats endpoints — baby existence check
 async def validate_baby_exists(baby_id: int) -> None:
-    """Validate that the baby exists in the database."""
     baby_manager = BabyDataManager()
     exists = await baby_manager.baby_exists(baby_id)
-    
+
     if not exists:
         raise HTTPException(
             status_code=404,
@@ -101,7 +91,7 @@ async def validate_baby_exists(baby_id: int) -> None:
         )
 
 
-# Used by: Statistics page — sensor averages line chart (temperature/humidity/noise over time)
+# Used by: Statistics page — sensor averages chart
 @router.get("/sensors", response_model=SensorStatsResponse)
 async def get_sensor_stats(
     baby_id: int = Query(..., description="Baby ID"),
@@ -109,33 +99,23 @@ async def get_sensor_stats(
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)")
 ):
-    """
-    Get sensor averages over a time range for graphing.
-    
-    Data comes from daily_summary table (one point per day).
-    Minimum 7 days, maximum 90 days (3 months).
-    """
-    # Validate inputs
     validate_date_range(start_date, end_date)
     await validate_baby_exists(baby_id)
-    
-    # Map sensor name to database column
+
     sensor_column_map = {
         "temperature": "avg_temp",
         "humidity": "avg_humidity",
         "noise": "avg_noise"
     }
     db_column = sensor_column_map[sensor]
-    
-    # Fetch data
+
     baby_manager = BabyDataManager()
     summaries = await baby_manager.get_daily_summaries_range(
         baby_id=baby_id,
         start_date=start_date,
         end_date=end_date
     )
-    
-    # Build response data points
+
     data_points = []
     for summary in summaries:
         value = summary.get(db_column)
@@ -144,12 +124,12 @@ async def get_sensor_stats(
                 date=summary["summary_date"],
                 value=round(value, 2)
             ))
-    
+
     logger.info(
         f"Retrieved {len(data_points)} sensor data points for baby {baby_id} "
         f"({sensor}, {start_date} to {end_date})"
     )
-    
+
     return SensorStatsResponse(
         baby_id=baby_id,
         sensor=sensor,
@@ -159,40 +139,30 @@ async def get_sensor_stats(
     )
 
 
-# Used by: Statistics page — sleep pattern clusters chart (typical sleep windows per month)
+# Used by: Statistics page — sleep pattern clusters
 @router.get("/sleep-patterns", response_model=SleepPatternsResponse)
 async def get_sleep_patterns(
     baby_id: int = Query(..., description="Baby ID"),
     month: int = Query(None, ge=1, le=12, description="Month (1-12), defaults to current"),
     year: int = Query(None, description="Year, defaults to current")
 ):
-    """
-    Get sleep time patterns for a specific month.
-    
-    Returns clustered sleep time windows with averaged start/end times.
-    Useful for parents to understand when the baby typically sleeps.
-    """
-    # Default to current month/year
     now = datetime.now()
     if month is None:
         month = now.month
     if year is None:
         year = now.year
-    
+
     await validate_baby_exists(baby_id)
-    
-    # Fetch sleep sessions for the month
+
     baby_manager = BabyDataManager()
     raw_sessions = await baby_manager.get_sleep_sessions_for_month(
         baby_id=baby_id,
         year=year,
         month=month
     )
-    
-    # Analyze patterns using clustering
+
     patterns_data = analyze_sleep_patterns(raw_sessions)
-    
-    # Convert to Pydantic models
+
     patterns = [
         SleepPattern(
             cluster_id=p["cluster_id"],
@@ -206,14 +176,14 @@ async def get_sleep_patterns(
         )
         for p in patterns_data
     ]
-    
+
     total_sessions = sum(p.session_count for p in patterns)
-    
+
     logger.info(
         f"Analyzed {total_sessions} sleep sessions for baby {baby_id} "
         f"({year}-{month:02d}), found {len(patterns)} patterns"
     )
-    
+
     return SleepPatternsResponse(
         baby_id=baby_id,
         month=month,
@@ -223,32 +193,24 @@ async def get_sleep_patterns(
     )
 
 
-# Used by: Statistics page — daily sleep totals bar chart (hours per day + session count)
+# Used by: Statistics page — daily sleep totals
 @router.get("/daily-sleep", response_model=DailySleepResponse)
 async def get_daily_sleep(
     baby_id: int = Query(..., description="Baby ID"),
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)")
 ):
-    """
-    Get total sleep hours per day over a time range.
-    
-    Returns daily sleep totals and session counts for graphing.
-    Minimum 7 days, maximum 90 days (3 months).
-    """
-    # Validate inputs
     validate_date_range(start_date, end_date)
     await validate_baby_exists(baby_id)
-    
-    # Fetch sleep sessions
+
     baby_manager = BabyDataManager()
     sessions = await baby_manager.get_sleep_sessions_for_range(
         baby_id=baby_id,
         start_date=start_date,
         end_date=end_date
     )
-    
-    # Aggregate raw duration by date (backward compatible)
+
+    # Aggregate raw duration by date
     daily_data = defaultdict(lambda: {"total_minutes": 0.0, "sessions": 0, "awakenings": 0})
 
     for session in sessions:
@@ -257,14 +219,13 @@ async def get_daily_sleep(
         if session_date:
             daily_data[session_date]["total_minutes"] += duration
 
-    # Count sleep blocks and awakenings per date (grouped, not raw events)
+    # Count blocks/awakenings per date (grouped, not raw events)
     blocks = group_into_sleep_blocks(sessions, source="sessions_for_range")
     for block in blocks:
         block_date = block.block_end.date()
         daily_data[block_date]["sessions"] += 1
         daily_data[block_date]["awakenings"] += block.interruption_count
 
-    # Build response data points
     data_points = []
     for day_date, stats in sorted(daily_data.items()):
         data_points.append(DailySleepPoint(
@@ -273,12 +234,12 @@ async def get_daily_sleep(
             sessions_count=stats["sessions"],
             awakenings_count=stats["awakenings"]
         ))
-    
+
     logger.info(
         f"Retrieved daily sleep data for baby {baby_id}: "
         f"{len(data_points)} days with data ({start_date} to {end_date})"
     )
-    
+
     return DailySleepResponse(
         baby_id=baby_id,
         start_date=start_date,
@@ -287,28 +248,16 @@ async def get_daily_sleep(
     )
 
 
-# Used by: Statistics page — AI-powered awakening correlation insights (Gemini)
+# Used by: Statistics page — AI awakening insights (Gemini)
 @router.get("/insights")
 async def get_sleep_insights(
     baby_id: int = Query(..., description="Baby ID"),
     event_id: Optional[int] = Query(None, description="Specific awakening event ID (optional, defaults to latest)")
 ):
-    """
-    Get AI-powered insights about a baby's sleep/awakening.
-    
-    If event_id is provided, analyzes that specific awakening event.
-    Otherwise, analyzes the most recent awakening event.
-    
-    Returns Gemini-generated insights about:
-    - Likely causes of awakening
-    - Environmental factors that may have affected sleep
-    - Actionable tips for better sleep
-    """
     await validate_baby_exists(baby_id)
-    
+
     baby_manager = BabyDataManager()
-    
-    # Get the awakening event
+
     if event_id:
         event = await baby_manager.get_awakening_event_by_id(event_id, baby_id)
         if not event:
@@ -317,47 +266,43 @@ async def get_sleep_insights(
                 detail=f"Awakening event {event_id} not found for baby {baby_id}"
             )
     else:
-        # Get most recent awakening
         event = await baby_manager.get_latest_awakening_event(baby_id)
         if not event:
             raise HTTPException(
                 status_code=404,
                 detail=f"No awakening events found for baby {baby_id}"
             )
-    
-    # Parse event data
+
     awakened_at = event.get("awakened_at")
     sleep_started_at = event.get("sleep_started_at")
-    
+
     if not awakened_at:
         raise HTTPException(
             status_code=400,
             detail="Awakening event missing awakened_at timestamp"
         )
-    
-    # Calculate sleep duration
+
     if sleep_started_at:
         sleep_duration_minutes = (awakened_at - sleep_started_at).total_seconds() / 60.0
     else:
         sleep_duration_minutes = 0.0
-    
-    # Run correlation analysis with Gemini
+
     analyzer = CorrelationAnalyzer()
     result = await analyzer.analyze_awakening(
         baby_id=baby_id,
         awakened_at=awakened_at,
         sleep_duration_minutes=sleep_duration_minutes
     )
-    
+
     if not result.success:
         logger.warning(f"Insights generation failed for baby {baby_id}: {result.error}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate insights: {result.error}"
         )
-    
+
     logger.info(f"Generated AI insights for baby {baby_id}, event {event.get('id')}")
-    
+
     return {
         "baby_id": baby_id,
         "event_id": event.get("id"),
@@ -369,26 +314,16 @@ async def get_sleep_insights(
     }
 
 
-# Used by: Home Dashboard — optimal sleep conditions card (best temp/humidity/noise)
+# Used by: Home Dashboard — optimal conditions card
 @router.get("/optimal", response_model=OptimalStatsResponse)
 async def get_optimal_stats(
     baby_id: int = Query(..., description="Baby ID")
 ):
-    """
-    Get optimal sleep conditions for a baby.
-    
-    Returns the calculated optimal temperature, humidity, and noise levels
-    based on the baby's best sleep sessions.
-    
-    Returns has_data=False if not enough data has been collected yet.
-    """
     await validate_baby_exists(baby_id)
-    
+
     baby_manager = BabyDataManager()
-    
-    # Query optimal_stats table for this baby
     optimal = await baby_manager.get_optimal_stats(baby_id)
-    
+
     if not optimal:
         logger.info(f"No optimal stats found for baby {baby_id}")
         return OptimalStatsResponse(
@@ -398,16 +333,15 @@ async def get_optimal_stats(
             noise=None,
             has_data=False
         )
-    
-    # Check if we have meaningful data (at least one value)
+
     has_data = any([
         optimal.get("temperature") is not None,
         optimal.get("humidity") is not None,
         optimal.get("noise") is not None
     ])
-    
+
     logger.info(f"Retrieved optimal stats for baby {baby_id}: has_data={has_data}")
-    
+
     return OptimalStatsResponse(
         baby_id=baby_id,
         temperature=optimal.get("temperature"),
@@ -417,74 +351,50 @@ async def get_optimal_stats(
     )
 
 
-# Used by: Statistics page — weekly/monthly sleep trend analysis with AI insights
+# Used by: Statistics page — trend analysis
 @router.get("/trends", response_model=TrendsResponse)
 async def get_trends(
     baby_id: int = Query(..., description="Baby ID")
 ):
-    """
-    Get comprehensive sleep trend analysis for a baby.
-    
-    Returns 7-day and 30-day trend analysis with AI-generated insights,
-    including sleep quality trends, consistency scores, and age-appropriate
-    comparisons.
-    """
     await validate_baby_exists(baby_id)
-    
-    # Get comprehensive trend analysis
+
     result = await get_sleep_trends(baby_id, include_ai_summary=True)
-    
+
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    
-    # Build response
+
     response = TrendsResponse(
         baby_id=result["baby_id"],
         baby_name=result["baby_name"],
         age_months=result["age_months"],
         age_recommendation=AgeRecommendation(**result["age_recommendation"])
     )
-    
-    # Add weekly trend if available
+
     if result.get("weekly"):
         response.weekly = WeeklyTrend(**result["weekly"])
-    
-    # Add monthly trend if available
+
     if result.get("monthly"):
         response.monthly = MonthlyTrend(**result["monthly"])
-    
-    # Add AI insights if available
+
     if result.get("ai_insights"):
         response.ai_insights = AITrendInsights(**result["ai_insights"])
-    
+
     logger.info(f"Retrieved trends for baby {baby_id}")
     return response
 
 
-# Used by: Home Dashboard — next sleep prediction card (wake windows + bedtime suggestion)
+# Used by: Home Dashboard — next sleep prediction
 @router.get("/schedule-prediction", response_model=SchedulePredictionResponse)
 async def get_schedule_prediction_endpoint(
     baby_id: int = Query(..., description="Baby ID")
 ):
-    """
-    Get schedule prediction for a baby.
-    
-    Predicts the next likely sleep window based on:
-    - Historical sleep patterns
-    - Age-appropriate wake windows
-    - Time since last awakening
-    
-    Returns prediction with confidence level and actionable suggestions.
-    """
     await validate_baby_exists(baby_id)
-    
-    # Get schedule prediction
+
     result = await get_schedule_prediction(baby_id)
-    
+
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
-    
-    # Build response
+
     response = SchedulePredictionResponse(
         baby_id=result["baby_id"],
         generated_at=datetime.fromisoformat(result["generated_at"]),
@@ -493,8 +403,7 @@ async def get_schedule_prediction_endpoint(
         current_wake_duration_minutes=result.get("current_wake_duration_minutes"),
         suggestions=result.get("suggestions", [])
     )
-    
-    # Add next sleep prediction if available
+
     if result.get("next_sleep"):
         ns = result["next_sleep"]
         response.next_sleep = NextSleepPrediction(
@@ -506,49 +415,33 @@ async def get_schedule_prediction_endpoint(
             minutes_until=ns["minutes_until"],
             wake_window_status=ns["wake_window_status"]
         )
-    
+
     logger.info(f"Generated schedule prediction for baby {baby_id}")
     return response
 
 
-# Used by: Home Dashboard — combined AI summary (sleep quality, environment, tips, trends)
+# Used by: Home Dashboard — AI summary
 @router.get("/ai-summary", response_model=AISummaryResponse)
 async def get_ai_summary(
     baby_id: int = Query(..., description="Baby ID")
 ):
-    """
-    Get comprehensive AI summary for the home dashboard.
-    
-    Combines multiple AI analyses into a single response:
-    - Sleep quality summary
-    - Environment assessment
-    - Next sleep prediction
-    - Today's tip
-    - Trend indicator
-    - Quick insights
-    
-    Optimized for display on the home dashboard.
-    """
     await validate_baby_exists(baby_id)
-    
+
     baby_manager = BabyDataManager()
-    
-    # Get baby info
+
     baby = await baby_manager.get_baby_by_id(baby_id)
     if not baby:
         raise HTTPException(status_code=404, detail="Baby not found")
-    
+
     baby_name = baby.first_name
     now = datetime.now()
-    
-    # Get latest awakening event for sleep summary
+
     latest_event = await baby_manager.get_latest_awakening_event(baby_id)
-    
-    # Build sleep quality summary
+
     sleep_summary = SleepQualitySummary(
         message="Keep tracking sleep to see insights!"
     )
-    
+
     if latest_event:
         sleep_duration = latest_event.get("sleep_duration_minutes")
         if sleep_duration:
@@ -557,8 +450,8 @@ async def get_ai_summary(
                 last_sleep_hours=round(sleep_hours, 1),
                 message=f"{baby_name}'s last sleep was {sleep_hours:.1f} hours"
             )
-    
-    # Get current room conditions — try live sensors first, fall back to DB
+
+    # Live sensors first, fallback to DB
     live_data = {}
     try:
         data_source = HttpSensorSource(
@@ -593,12 +486,12 @@ async def get_ai_summary(
         temp = live_data.get("temp_celcius")
         humidity = live_data.get("humidity")
         noise = live_data.get("noise_decibel")
-        
+
         issues = []
         temp_status = "optimal"
         humidity_status = "optimal"
         noise_status = "optimal"
-        
+
         if temp:
             if temp > TEMP_OPTIMAL_HIGH_C:
                 temp_status = "high"
@@ -614,11 +507,11 @@ async def get_ai_summary(
             elif humidity < HUMIDITY_OPTIMAL_LOW_PCT:
                 humidity_status = "low"
                 issues.append("humidity is low")
-        
+
         if noise and noise > NOISE_ALERT_HIGH_DB:
             noise_status = "high"
             issues.append("noise level is elevated")
-        
+
         if issues:
             environment = EnvironmentStatus(
                 status="needs_attention",
@@ -635,13 +528,12 @@ async def get_ai_summary(
                 noise_status=noise_status,
                 message="Room conditions are ideal for sleep"
             )
-    
-    # Get schedule prediction
+
     try:
         schedule_result = await get_schedule_prediction(baby_id)
         next_sleep_prediction = None
         next_sleep_time = None
-        
+
         if schedule_result.get("next_sleep"):
             ns = schedule_result["next_sleep"]
             next_sleep_time = ns["predicted_time_formatted"]
@@ -654,13 +546,12 @@ async def get_ai_summary(
     except:
         next_sleep_prediction = None
         next_sleep_time = None
-    
-    # Get trend info
+
     try:
         trend_result = await get_sleep_trends(baby_id, include_ai_summary=False)
         weekly_trend = None
         trend_message = None
-        
+
         if trend_result.get("weekly"):
             weekly = trend_result["weekly"]
             weekly_trend = weekly.get("trend")
@@ -673,19 +564,17 @@ async def get_ai_summary(
     except:
         weekly_trend = None
         trend_message = None
-    
-    # Generate today's tip using AI
+
     todays_tip = await _generate_todays_tip(baby_name, environment, sleep_summary, weekly_trend)
-    
-    # Generate quick insights
+
     quick_insights = _generate_quick_insights(
-        baby_name, 
-        sleep_summary, 
-        environment, 
+        baby_name,
+        sleep_summary,
+        environment,
         weekly_trend,
         latest_event
     )
-    
+
     return AISummaryResponse(
         baby_id=baby_id,
         baby_name=baby_name,
@@ -701,27 +590,16 @@ async def get_ai_summary(
     )
 
 
-# Used by: Statistics page — enhanced multi-section AI insights (cause, tips, environment, age context)
+# Used by: Statistics page — enhanced AI insights
 @router.get("/insights-enhanced", response_model=EnhancedInsightsResponse)
 async def get_enhanced_insights(
     baby_id: int = Query(..., description="Baby ID"),
     event_id: Optional[int] = Query(None, description="Specific awakening event ID (optional)")
 ):
-    """
-    Get enhanced AI-powered insights with structured multi-section response.
-    
-    Returns detailed analysis including:
-    - Likely cause of awakening
-    - Multiple actionable tips
-    - Environment assessment
-    - Age-appropriate context
-    - Sleep quality note
-    """
     await validate_baby_exists(baby_id)
-    
+
     baby_manager = BabyDataManager()
-    
-    # Get the awakening event
+
     if event_id:
         event = await baby_manager.get_awakening_event_by_id(event_id, baby_id)
         if not event:
@@ -736,38 +614,35 @@ async def get_enhanced_insights(
                 status_code=404,
                 detail=f"No awakening events found for baby {baby_id}"
             )
-    
+
     awakened_at = event.get("awakened_at")
     sleep_started_at = event.get("sleep_started_at")
-    
+
     if not awakened_at:
         raise HTTPException(
             status_code=400,
             detail="Awakening event missing awakened_at timestamp"
         )
-    
-    # Calculate sleep duration
+
     if sleep_started_at:
         sleep_duration_minutes = (awakened_at - sleep_started_at).total_seconds() / 60.0
     else:
         sleep_duration_minutes = 0.0
-    
-    # Run enhanced correlation analysis
+
     analyzer = CorrelationAnalyzer()
     result = await analyzer.analyze_awakening_enhanced(
         baby_id=baby_id,
         awakened_at=awakened_at,
         sleep_duration_minutes=sleep_duration_minutes
     )
-    
+
     if not result.success:
         logger.warning(f"Enhanced insights generation failed for baby {baby_id}: {result.error}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate enhanced insights: {result.error}"
         )
-    
-    # Build structured insight response
+
     structured_insight = None
     if result.insights:
         structured_insight = StructuredInsightResponse(
@@ -777,9 +652,9 @@ async def get_enhanced_insights(
             age_context=result.insights.age_context,
             sleep_quality_note=result.insights.sleep_quality_note
         )
-    
+
     logger.info(f"Generated enhanced insights for baby {baby_id}")
-    
+
     return EnhancedInsightsResponse(
         baby_id=baby_id,
         event_id=event.get("id"),
@@ -792,14 +667,13 @@ async def get_enhanced_insights(
     )
 
 
-# Used by: get_ai_summary — generates context-aware daily tip using Gemini AI
+# Used by: get_ai_summary — daily tip via Gemini
 async def _generate_todays_tip(
     baby_name: str,
     environment: EnvironmentStatus,
     sleep_summary: SleepQualitySummary,
     weekly_trend: Optional[str]
 ) -> str:
-    """Generate a personalized daily tip using Gemini AI."""
     try:
         from google import genai
         from google.genai import types
@@ -808,10 +682,8 @@ async def _generate_todays_tip(
         if not client:
             return _fallback_tip(baby_name)
 
-        # Build context for the prompt
         context_parts = [f"Baby name: {baby_name}"]
 
-        # Environment context
         if environment.status == "needs_attention":
             issues = []
             if environment.temperature_status == "high":
@@ -829,17 +701,14 @@ async def _generate_todays_tip(
         else:
             context_parts.append("Room conditions: optimal")
 
-        # Sleep context
         if sleep_summary.last_sleep_hours is not None:
             context_parts.append(f"Last sleep duration: {sleep_summary.last_sleep_hours:.1f} hours")
         if sleep_summary.trend_direction:
             context_parts.append(f"Sleep trend direction: {sleep_summary.trend_direction}")
 
-        # Trend context
         if weekly_trend:
             context_parts.append(f"Weekly sleep trend: {weekly_trend}")
 
-        # Time of day
         hour = datetime.now().hour
         if hour < 12:
             context_parts.append("Time of day: morning")
@@ -887,7 +756,6 @@ Rules:
 
 
 def _fallback_tip(baby_name: str) -> str:
-    """Simple fallback tip when AI is unavailable."""
     hour = datetime.now().hour
     if hour < 12:
         return f"Morning naps often set the tone for the day. Watch for {baby_name}'s early tiredness cues."
@@ -897,7 +765,7 @@ def _fallback_tip(baby_name: str) -> str:
         return f"A consistent bedtime routine helps {baby_name} wind down and sleep better through the night."
 
 
-# Used by: get_ai_summary — generates list of short insight strings for dashboard display
+# Used by: get_ai_summary — quick insight strings
 def _generate_quick_insights(
     baby_name: str,
     sleep_summary: SleepQualitySummary,
@@ -905,36 +773,30 @@ def _generate_quick_insights(
     weekly_trend: Optional[str],
     latest_event: Optional[dict]
 ) -> List[str]:
-    """Generate a list of quick insights."""
     insights = []
-    
-    # Sleep insight
+
     if sleep_summary.last_sleep_hours:
         if sleep_summary.last_sleep_hours is not None and sleep_summary.last_sleep_hours >= 1.5:
             insights.append(f"{baby_name} had a restful {sleep_summary.last_sleep_hours:.1f}h sleep")
         elif sleep_summary.last_sleep_hours < 1:
             insights.append(f"Last nap was brief ({int(sleep_summary.last_sleep_hours * 60)}min) - watch for early tiredness")
-    
-    # Environment insight
+
     if environment.status == "optimal":
         insights.append("Room conditions are ideal for sleep")
     elif environment.status == "needs_attention":
         insights.append(f"Room {environment.message.lower()}")
-    
-    # Trend insight
+
     if weekly_trend == "improving":
         insights.append("Sleep quality trending upward this week")
     elif weekly_trend == "declining":
         insights.append("Sleep has been a bit variable — small schedule tweaks might help")
     elif weekly_trend == "stable":
         insights.append("Sleep patterns are consistent")
-    
-    # Time-based insight
+
     hour = datetime.now().hour
     if hour < 10:
         insights.append("Good morning! Track first nap for pattern insights")
     elif hour >= 19:
         insights.append("Evening wind-down time - dim lights for better melatonin production")
-    
-    return insights[:4]  # Limit to 4 insights
 
+    return insights[:4]  # cap for dashboard display

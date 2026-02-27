@@ -1,4 +1,4 @@
-"""Authentication Manager - handles all auth operations"""
+"""Auth operations: signup, signin, register-baby, change-password."""
 
 import logging
 from typing import Optional, Tuple
@@ -12,11 +12,6 @@ logger = logging.getLogger(__name__)
 
 # Used by: auth.py (POST /auth/signup, /auth/register-baby, /auth/signin, /auth/change-password)
 class AuthManager:
-    """
-    Manager class for authentication operations.
-    Provides type-safe methods using Pydantic models.
-    """
-
     def __init__(self):
         self.database = get_database()
 
@@ -30,29 +25,23 @@ class AuthManager:
         baby_first_name: Optional[str] = None,
         baby_birthdate: Optional[date] = None,
     ) -> Tuple[User, Optional[Babies], bool]:
-        """
-        Register user and optionally check for existing baby.
-        If baby_first_name and baby_birthdate are provided, searches for a matching baby.
-        Returns: (user, baby, baby_was_found)
-        Raises: ValueError if username exists
-        """
+        """Register user; optionally match existing baby. Returns (user, baby, baby_was_found). Raises ValueError if username exists."""
         async with self.database.session() as session:
-            # Check username
             result = await session.execute(
                 text('SELECT id FROM "Nappi"."users" WHERE username = :username'),
                 {"username": username}
             )
             if result.first():
                 raise ValueError("Username already exists")
-            
+
             baby_row = None
             if baby_first_name and baby_birthdate:
                 baby_result = await session.execute(
                     text('''
                         SELECT id, first_name, last_name, birthdate, gender, created_at
                         FROM "Nappi"."babies"
-                        WHERE first_name = :first_name 
-                        AND last_name = :last_name 
+                        WHERE first_name = :first_name
+                        AND last_name = :last_name
                         AND birthdate = :birthdate
                     '''),
                     {
@@ -62,9 +51,9 @@ class AuthManager:
                     }
                 )
                 baby_row = baby_result.mappings().first()
-            
+
             baby_id = baby_row["id"] if baby_row else None
-            
+
             user_result = await session.execute(
                 text('''
                     INSERT INTO "Nappi"."users" (username, password, first_name, last_name, baby_id)
@@ -80,11 +69,11 @@ class AuthManager:
                 }
             )
             await session.commit()
-            
+
             user_row = user_result.mappings().first()
             user = User(**user_row)
             baby = Babies(**baby_row) if baby_row else None
-            
+
             logger.info(f"User registered: {first_name} {last_name}, baby_found={baby is not None}")
             return user, baby, baby is not None
 
@@ -96,13 +85,8 @@ class AuthManager:
         birthdate: date,
         gender: Optional[str] = None,
     ) -> Tuple[User, Babies]:
-        """
-        Create baby using user's last_name and link to user.
-        Returns: (user, baby)
-        Raises: ValueError if user not found
-        """
+        """Create baby using user's last_name and link to user. Raises ValueError if user not found."""
         async with self.database.session() as session:
-            # Verify user and get their last_name
             user_result = await session.execute(
                 text('SELECT * FROM "Nappi"."users" WHERE id = :id'),
                 {"id": user_id}
@@ -110,8 +94,7 @@ class AuthManager:
             user_row = user_result.mappings().first()
             if not user_row:
                 raise ValueError("User not found")
-            
-            # Create baby using user's last_name
+
             baby_result = await session.execute(
                 text('''
                     INSERT INTO "Nappi"."babies" (first_name, last_name, birthdate, gender)
@@ -126,14 +109,13 @@ class AuthManager:
                 }
             )
             baby_row = baby_result.mappings().first()
-            
-            # Link baby to user
+
             await session.execute(
                 text('UPDATE "Nappi"."users" SET baby_id = :baby_id WHERE id = :user_id'),
                 {"baby_id": baby_row["id"], "user_id": user_id}
             )
             await session.commit()
-            
+
             user = User(
                 id=user_row["id"],
                 username=user_row["username"],
@@ -143,7 +125,7 @@ class AuthManager:
                 baby_id=baby_row["id"]
             )
             baby = Babies(**baby_row)
-            
+
             logger.info(f"Baby registered: {first_name} {user_row['last_name']} → user_id={user_id}")
             return user, baby
 
@@ -153,16 +135,12 @@ class AuthManager:
         username: str,
         password: str
     ) -> Tuple[User, Optional[Babies]]:
-        """
-        Authenticate user.
-        Returns: (user, baby)
-        Raises: ValueError if credentials invalid
-        """
+        """Authenticate user. Returns (user, baby). Raises ValueError if credentials invalid."""
         async with self.database.session() as session:
             result = await session.execute(
                 text('''
                     SELECT u.id, u.username, u.password, u.first_name, u.last_name, u.baby_id,
-                           b.id as b_id, b.first_name as b_first_name, b.last_name as b_last_name, 
+                           b.id as b_id, b.first_name as b_first_name, b.last_name as b_last_name,
                            b.birthdate, b.gender, b.created_at
                     FROM "Nappi"."users" u
                     LEFT JOIN "Nappi"."babies" b ON u.baby_id = b.id
@@ -171,10 +149,10 @@ class AuthManager:
                 {"username": username, "password": password}
             )
             row = result.mappings().first()
-            
+
             if not row:
                 raise ValueError("Invalid username or password")
-            
+
             user = User(
                 id=row["id"],
                 username=row["username"],
@@ -183,7 +161,7 @@ class AuthManager:
                 last_name=row["last_name"],
                 baby_id=row["baby_id"]
             )
-            
+
             baby = None
             if row["b_id"]:
                 baby = Babies(
@@ -194,7 +172,7 @@ class AuthManager:
                     gender=row["gender"],
                     created_at=row["created_at"]
                 )
-            
+
             logger.info(f"User signed in: {username}")
             return user, baby
 
@@ -205,16 +183,12 @@ class AuthManager:
             old_password: str,
             new_password: str,
     ) -> bool:
-        """
-        Change user password.
-        Returns: boolean
-        Raises: ValueError if old password incorrect
-        """
+        """Change user password. Returns False if old password incorrect."""
         async with self.database.session() as session:
             result = await session.execute(
                 text('''
                     UPDATE "Nappi"."users"
-                    SET password = :new_password 
+                    SET password = :new_password
                     WHERE id = :user_id AND password = :old_password
                     RETURNING id
                 '''),

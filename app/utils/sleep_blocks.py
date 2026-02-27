@@ -1,11 +1,4 @@
-"""
-Sleep Block Grouping Utility.
-
-Groups consecutive awakening events into logical sleep blocks.
-A sleep block is a continuous period of sleep with brief interruptions.
-E.g., a night sleep from 9 PM to 6 AM with 2 brief wake-ups = 1 sleep block
-with 3 constituent events and 2 interruptions.
-"""
+"""Groups consecutive awakening events into logical sleep blocks."""
 
 import logging
 from dataclasses import dataclass, field
@@ -19,10 +12,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_GAP_THRESHOLD_MINUTES = SLEEP_BLOCK_GAP_THRESHOLD_MINUTES
 
 
-# Used by: group_into_sleep_blocks() return type; consumed by stats.py, chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py
+# Used by: group_into_sleep_blocks() return; stats.py, chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py
 @dataclass
 class SleepBlock:
-    """A logical sleep block grouping consecutive awakening events."""
     block_start: datetime
     block_end: datetime
     total_sleep_minutes: float
@@ -38,20 +30,7 @@ def group_into_sleep_blocks(
     gap_threshold_minutes: float = DEFAULT_GAP_THRESHOLD_MINUTES,
     source: str = "auto"
 ) -> List[SleepBlock]:
-    """
-    Group consecutive awakening events into sleep blocks.
-
-    Events within gap_threshold_minutes of each other are grouped together.
-
-    Args:
-        events: List of event dicts.
-        gap_threshold_minutes: Max gap (minutes) to group events.
-        source: One of "awakenings_with_insights", "events_for_period",
-                "sessions_for_range", or "auto".
-
-    Returns:
-        List of SleepBlock objects, sorted chronologically.
-    """
+    """Events within gap_threshold_minutes are grouped together."""
     if not events:
         return []
 
@@ -88,7 +67,6 @@ def group_into_sleep_blocks(
 
 # Used by: _normalize_event() when source="auto"
 def _detect_source(event: Dict[str, Any]) -> str:
-    """Auto-detect the source format of an event dict."""
     if "event_metadata" in event:
         return "events_for_period"
     if "ai_insight" in event:
@@ -100,7 +78,6 @@ def _detect_source(event: Dict[str, Any]) -> str:
 
 # Used by: _normalize_event()
 def _parse_timestamp(value: Any) -> Optional[datetime]:
-    """Parse a timestamp from various formats."""
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
@@ -113,12 +90,7 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
 
 # Used by: group_into_sleep_blocks()
 def _normalize_event(event: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
-    """
-    Extract normalized timestamps from an event dict regardless of source.
-
-    Returns dict with sleep_started_at, awakened_at, duration_minutes,
-    and original event reference. Returns None if normalization fails.
-    """
+    """Returns dict with sleep_started_at, awakened_at, duration_minutes, original; or None if fails."""
     if source == "auto":
         source = _detect_source(event)
 
@@ -177,7 +149,6 @@ def _normalize_event(event: Dict[str, Any], source: str) -> Optional[Dict[str, A
 
 # Used by: group_into_sleep_blocks()
 def _build_block(normalized_events: List[Dict[str, Any]]) -> SleepBlock:
-    """Build a SleepBlock from a list of normalized events."""
     block_start = normalized_events[0]["sleep_started_at"]
     block_end = normalized_events[-1]["awakened_at"]
     total_sleep = sum(e["duration_minutes"] for e in normalized_events)

@@ -1,4 +1,4 @@
-"""Authentication API endpoints"""
+"""Auth endpoints — signup, signin, register-baby, change-password."""
 
 from typing import Optional
 from fastapi import APIRouter, HTTPException, status
@@ -9,8 +9,6 @@ from app.db.models import BabyResponse
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
-
-# ========== Request Models ==========
 
 class SignUpRequest(BaseModel):
     username: str
@@ -47,8 +45,6 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
-# ========== Response Models ==========
-
 class SignUpResponse(BaseModel):
     user_id: int
     username: str
@@ -73,12 +69,9 @@ class ChangePasswordResponse(BaseModel):
     password_changed: bool
 
 
-# ========== Endpoints ==========
-
-# Used by: Signup page — new user registration with baby auto-detection
+# Used by: Signup page — registers user, checks for existing baby by name + birthdate
 @router.post("/signup", response_model=SignUpResponse, status_code=status.HTTP_201_CREATED)
 async def signup(request: SignUpRequest):
-    """Register new user, check for existing baby using user's last name"""
     try:
         auth = AuthManager()
         user, baby, found = await auth.signup(
@@ -112,10 +105,9 @@ async def signup(request: SignUpRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-# Used by: Onboarding page — register baby after signup when no existing baby found
+# Used by: Onboarding page — register baby when no existing baby found at signup
 @router.post("/register-baby", response_model=AuthResponse)
 async def register_baby(request: RegisterBabyRequest):
-    """Register baby using user's last name and link to user"""
     try:
         auth = AuthManager()
         user, baby = await auth.register_baby(
@@ -143,10 +135,9 @@ async def register_baby(request: RegisterBabyRequest):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-# Used by: Login page — user authentication
+# Used by: Login page
 @router.post("/signin", response_model=AuthResponse)
 async def signin(request: SignInRequest):
-    """Authenticate user"""
     try:
         auth = AuthManager()
         user, baby = await auth.signin(request.username, request.password)
@@ -176,7 +167,6 @@ async def signin(request: SignInRequest):
 # Used by: User Profile page — change password form
 @router.post("/change-password", response_model=ChangePasswordResponse)
 async def change_password(request: ChangePasswordRequest):
-    """Change user password"""
     try:
         auth = AuthManager()
         result = await auth.change_password(request.user_id, request.old_password, request.new_password)

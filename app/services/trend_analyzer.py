@@ -1,13 +1,4 @@
-"""
-Trend Analyzer Service - Analyzes sleep patterns over time and generates AI insights.
-
-This service provides:
-1. 7-day and 30-day sleep trend analysis
-2. Sleep quality trend detection (improving/declining/stable)
-3. Consistency scores
-4. AI-powered weekly/monthly summaries using Gemini
-5. Comparison to age-appropriate sleep recommendations
-"""
+"""Analyzes sleep trends over time and generates AI insights."""
 
 import logging
 import asyncio
@@ -28,13 +19,11 @@ from ..utils.sleep_blocks import group_into_sleep_blocks
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded Gemini client
 _gemini_client = None
 
 
 # Used by: TrendAnalyzer.generate_ai_summary()
 def _get_gemini_client():
-    """Lazy initialization of Gemini client."""
     global _gemini_client
     if _gemini_client is None and settings.GEMINI_API_KEY:
         try:
@@ -48,19 +37,16 @@ def _get_gemini_client():
     return _gemini_client
 
 
-# Used by: TrendAnalyzer.generate_ai_summary(), get_sleep_trends(), stats.py (age recommendation in response)
+# Used by: TrendAnalyzer.generate_ai_summary(), get_sleep_trends()
 def get_age_recommendation(age_months: int) -> Dict[str, Any]:
-    """Get sleep recommendations for a specific age in months."""
     for (min_age, max_age), recommendations in AGE_SLEEP_RECOMMENDATIONS.items():
         if min_age <= age_months <= max_age:
             return recommendations
-    # Default for older children
     return {"min_hours": 10, "max_hours": 12, "typical_naps": "0-1", "night_hours": "10-11"}
 
 
 @dataclass
 class DailyStats:
-    """Statistics for a single day."""
     date: date
     total_sleep_hours: float
     session_count: int
@@ -71,12 +57,11 @@ class DailyStats:
 
 @dataclass
 class TrendResult:
-    """Result of trend analysis."""
     period_days: int
     avg_sleep_hours: float
     sleep_trend: str  # "improving", "declining", "stable"
-    trend_percentage: float  # How much the trend changed
-    consistency_score: float  # 0-100, how consistent sleep is
+    trend_percentage: float
+    consistency_score: float  # 0-100
     best_day: Optional[str]
     worst_day: Optional[str]
     total_sessions: int
@@ -86,7 +71,6 @@ class TrendResult:
 
 @dataclass
 class AITrendInsight:
-    """AI-generated insight about sleep trends."""
     summary: str
     highlights: List[str]
     concerns: List[str]
@@ -95,35 +79,21 @@ class AITrendInsight:
 
 
 class TrendAnalyzer:
-    """
-    Analyzes sleep trends over time and generates AI-powered insights.
-    """
 
     def __init__(self):
         self.baby_manager = BabyDataManager()
 
-    # Used by: get_sleep_trends() (7-day and 30-day trend analysis)
+    # Used by: get_sleep_trends() — 7-day and 30-day trend analysis
     async def analyze_trends(
         self,
         baby_id: int,
         days: int = 7
     ) -> Optional[TrendResult]:
-        """
-        Analyze sleep trends for a baby over a specified period.
-        
-        Args:
-            baby_id: The ID of the baby
-            days: Number of days to analyze (7 or 30 recommended)
-            
-        Returns:
-            TrendResult with analysis data, or None if insufficient data
-        """
         logger.info(f"Analyzing {days}-day trends for baby {baby_id}")
         
         end_date = date.today()
         start_date = end_date - timedelta(days=days)
         
-        # Get sleep sessions
         sessions = await self.baby_manager.get_sleep_sessions_for_range(
             baby_id=baby_id,
             start_date=start_date,
@@ -134,21 +104,18 @@ class TrendAnalyzer:
             logger.warning(f"No sleep sessions found for baby {baby_id}")
             return None
         
-        # Get daily summaries for environmental data
         summaries = await self.baby_manager.get_daily_summaries_range(
             baby_id=baby_id,
             start_date=start_date,
             end_date=end_date
         )
         
-        # Aggregate by date
         daily_data = self._aggregate_daily_data(sessions, summaries)
         
         if len(daily_data) < 2:
             logger.warning(f"Insufficient daily data for trend analysis: {len(daily_data)} days")
             return None
         
-        # Calculate trend metrics
         sleep_hours = [d.total_sleep_hours for d in daily_data if d.total_sleep_hours > 0]
         
         if len(sleep_hours) < 2:
@@ -156,9 +123,7 @@ class TrendAnalyzer:
         
         avg_sleep = mean(sleep_hours)
         
-        # Trend direction: split the period in half, compare avg sleep hours.
-        # Positive change (>5%) = improving, negative (<-5%) = declining, else stable.
-        # Used in: Statistics trend cards, AI trend prompt context, dashboard weekly trend message.
+        # Trend direction: split period in half, compare avg sleep. >5% = improving, <-5% = declining.
         mid_point = len(sleep_hours) // 2
         first_half_avg = mean(sleep_hours[:mid_point]) if mid_point > 0 else avg_sleep
         second_half_avg = mean(sleep_hours[mid_point:]) if mid_point < len(sleep_hours) else avg_sleep
@@ -173,10 +138,7 @@ class TrendAnalyzer:
         else:
             sleep_trend = "stable"
 
-        # Consistency score (0-100): how uniform daily sleep durations are.
-        # Based on std_dev of daily hours — lower variance = higher score.
-        # e.g. std_dev of 1h → score 90, std_dev of 5h → score 50.
-        # Used in: Statistics trend cards display, Gemini trend prompt for AI analysis.
+        # Consistency score (0-100): lower std_dev of daily hours = higher score.
         if len(sleep_hours) >= 2:
             try:
                 std_dev = stdev(sleep_hours)
@@ -186,12 +148,10 @@ class TrendAnalyzer:
         else:
             consistency_score = 50.0
         
-        # Find best and worst days
         sorted_days = sorted(daily_data, key=lambda x: x.total_sleep_hours, reverse=True)
         best_day = sorted_days[0].date.strftime("%A") if sorted_days else None
         worst_day = sorted_days[-1].date.strftime("%A") if sorted_days else None
         
-        # Count sessions
         total_sessions = sum(d.session_count for d in daily_data)
         days_with_data = len([d for d in daily_data if d.session_count > 0])
         avg_sessions = total_sessions / days_with_data if days_with_data > 0 else 0
@@ -209,19 +169,16 @@ class TrendAnalyzer:
             daily_data=daily_data
         )
 
-    # Used by: self.analyze_trends() (aggregates sessions + summaries by date)
+    # Used by: self.analyze_trends() — aggregates sessions + summaries by date
     def _aggregate_daily_data(
         self,
         sessions: List[Dict[str, Any]],
         summaries: List[Dict[str, Any]]
     ) -> List[DailyStats]:
-        """Aggregate session and summary data by date, using sleep block grouping."""
         from collections import defaultdict
 
-        # Build summary lookup
         summary_by_date = {s["summary_date"]: s for s in summaries}
 
-        # Aggregate raw duration by date (backward compatible — no day-shifting)
         daily_sleep = defaultdict(lambda: {"total_minutes": 0.0, "block_count": 0})
 
         for session in sessions:
@@ -230,7 +187,6 @@ class TrendAnalyzer:
             if session_date:
                 daily_sleep[session_date]["total_minutes"] += duration
 
-        # Count sleep blocks per date
         blocks = group_into_sleep_blocks(sessions, source="sessions_for_range")
         for block in blocks:
             block_date = block.block_end.date()
@@ -239,7 +195,6 @@ class TrendAnalyzer:
             else:
                 daily_sleep[block_date]["block_count"] += 1
 
-        # Build DailyStats list
         daily_data = []
         for day_date, stats in sorted(daily_sleep.items()):
             summary = summary_by_date.get(day_date, {})
@@ -255,7 +210,7 @@ class TrendAnalyzer:
 
         return daily_data
 
-    # Used by: get_sleep_trends() (AI-powered weekly/monthly summary)
+    # Used by: get_sleep_trends() — AI-powered weekly/monthly summary
     async def generate_ai_summary(
         self,
         baby_id: int,
@@ -264,29 +219,14 @@ class TrendAnalyzer:
         baby_age_months: int,
         baby_name: str
     ) -> Optional[AITrendInsight]:
-        """
-        Generate AI-powered summary of sleep trends.
-        
-        Args:
-            baby_id: The ID of the baby
-            trend_7d: 7-day trend analysis
-            trend_30d: 30-day trend analysis
-            baby_age_months: Baby's age in months
-            baby_name: Baby's name
-            
-        Returns:
-            AITrendInsight with AI-generated analysis
-        """
         client = _get_gemini_client()
         
         if not client:
             logger.warning("Gemini client not available for trend summary")
             return None
         
-        # Get age-based recommendations
         age_rec = get_age_recommendation(baby_age_months)
         
-        # Build the prompt
         prompt = self._build_trend_prompt(
             baby_name=baby_name,
             age_months=baby_age_months,
@@ -319,7 +259,7 @@ class TrendAnalyzer:
         
         return None
 
-    # Used by: self.generate_ai_summary() (builds Gemini prompt with trend data)
+    # Used by: self.generate_ai_summary() — builds Gemini prompt
     def _build_trend_prompt(
         self,
         baby_name: str,
@@ -328,11 +268,8 @@ class TrendAnalyzer:
         trend_30d: Optional[TrendResult],
         age_rec: Dict[str, Any]
     ) -> str:
-        """Build the prompt for Gemini."""
-        
         age_str = self._format_age(age_months)
         
-        # Weekly data section
         weekly_section = ""
         if trend_7d:
             weekly_section = f"""
@@ -348,7 +285,6 @@ class TrendAnalyzer:
         else:
             weekly_section = "\n## This Week: Not enough data yet\n"
         
-        # Monthly data section
         monthly_section = ""
         if trend_30d:
             monthly_section = f"""
@@ -385,23 +321,19 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
 
         return prompt
 
-    # Used by: self.generate_ai_summary() (parses Gemini response into structured insight)
+    # Used by: self.generate_ai_summary() — parses Gemini response into structured insight
     def _parse_ai_response(
         self,
         response_text: str,
         age_months: int,
         age_rec: Dict[str, Any]
     ) -> AITrendInsight:
-        """Parse AI response into structured insight."""
-        
-        # Initialize with defaults
         summary = ""
         highlights = []
         concerns = []
         recommendations = []
         age_comparison = ""
         
-        # Parse sections
         current_section = None
         
         for line in response_text.split('\n'):
@@ -433,7 +365,6 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
             elif current_section == "age_comparison" and line and not line.startswith("-"):
                 age_comparison += " " + line
         
-        # Fallback if parsing didn't work well
         if not summary:
             summary = response_text[:200] if response_text else "Analysis in progress."
         
@@ -445,9 +376,8 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
             age_comparison=age_comparison.strip() or f"Sleep patterns are being compared to typical {self._format_age(age_months)} babies."
         )
 
-    # Used by: self._build_trend_prompt(), self._parse_ai_response() (formats age for prompts and fallback text)
+    # Used by: self._build_trend_prompt(), self._parse_ai_response()
     def _format_age(self, age_months: int) -> str:
-        """Format age in a readable way."""
         if age_months < 1:
             return "newborn"
         elif age_months == 1:
@@ -464,34 +394,21 @@ Be warm, supportive, and practical. Frame suggestions as options, not orders. Av
             return f"{years} year{'s' if years > 1 else ''} and {months} month{'s' if months > 1 else ''} old"
 
 
-# Used by: stats.py (GET /trends endpoint, GET /last-sleep summary endpoint)
+# Used by: stats.py (GET /stats/trends, GET /stats/ai-summary)
 async def get_sleep_trends(
     baby_id: int,
     include_ai_summary: bool = True
 ) -> Dict[str, Any]:
-    """
-    Get comprehensive sleep trend analysis for a baby.
-    
-    Args:
-        baby_id: The ID of the baby
-        include_ai_summary: Whether to generate AI summary
-        
-    Returns:
-        Dictionary with trend analysis and optionally AI insights
-    """
     analyzer = TrendAnalyzer()
     
-    # Get baby info for age calculation
     baby = await analyzer.baby_manager.get_baby_by_id(baby_id)
     if not baby:
         return {"error": "Baby not found"}
     
-    # Calculate age
     today = date.today()
     age_days = (today - baby.birthdate).days
     age_months = age_days // DAYS_PER_MONTH
     
-    # Get 7-day and 30-day trends
     trend_7d = await analyzer.analyze_trends(baby_id, days=7)
     trend_30d = await analyzer.analyze_trends(baby_id, days=30)
     
@@ -502,7 +419,6 @@ async def get_sleep_trends(
         "age_recommendation": get_age_recommendation(age_months),
     }
     
-    # Add 7-day trend
     if trend_7d:
         result["weekly"] = {
             "avg_sleep_hours": trend_7d.avg_sleep_hours,
@@ -517,7 +433,6 @@ async def get_sleep_trends(
     else:
         result["weekly"] = None
     
-    # Add 30-day trend
     if trend_30d:
         result["monthly"] = {
             "avg_sleep_hours": trend_30d.avg_sleep_hours,
@@ -529,7 +444,6 @@ async def get_sleep_trends(
     else:
         result["monthly"] = None
     
-    # Generate AI summary if requested
     if include_ai_summary and (trend_7d or trend_30d):
         ai_insight = await analyzer.generate_ai_summary(
             baby_id=baby_id,

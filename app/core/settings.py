@@ -6,23 +6,18 @@ from app.core.constants import (
     CORRELATION_TIME_WINDOW_MINUTES as _DEFAULT_CORRELATION_WINDOW,
 )
 
-# Load environment variables from .env file
 load_dotenv()
 
 
-# Used by: main.py, endpoints.py, scheduler.py, tasks.py, chat_service.py, correlation_analyzer.py, trend_analyzer.py, daily_summary.py, push_service.py, generate_models.py, seed_demo_data.py
 class Settings:
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
     
-    # Database Configuration
     DATABASE_URL: str = os.getenv("DB_CONNECTION_STRING")
     
-    # Sensor API Configuration
     SENSOR_API_BASE_URL: str = os.getenv("SENSOR_API_BASE_URL", "http://192.168.117.254:8001")
     SENSOR_POLL_INTERVAL_SECONDS: int = int(os.getenv("SENSOR_POLL_INTERVAL_SECONDS", "5"))
     
-    # CORS Configuration
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -30,32 +25,25 @@ class Settings:
     ]
     CORS_EXTRA_ORIGINS: str = os.getenv("CORS_EXTRA_ORIGINS", "")
     
-    # Logging Configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
-    # Gemini AI Configuration
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    # Model options: gemini-2.5-pro-preview-05-06, gemini-2.5-flash (default, used everywhere)
     GEMINI_MODEL_CHAT: str = os.getenv("GEMINI_MODEL_CHAT", "models/gemini-2.5-flash")
     GEMINI_MODEL_INSIGHTS: str = os.getenv("GEMINI_MODEL_INSIGHTS", "models/gemini-2.5-flash")
     
-    # Correlation Analysis Configuration — defaults from constants.py, overridable via env
+    # Defaults from constants.py; CORRELATION_TIME_WINDOW_MINUTES overridable via env
     CORRELATION_CHANGE_THRESHOLDS: dict = _DEFAULT_CORRELATION_THRESHOLDS
     CORRELATION_TIME_WINDOW_MINUTES: int = int(
         os.getenv("CORRELATION_TIME_WINDOW_MINUTES", str(_DEFAULT_CORRELATION_WINDOW))
     )
     
-    # Daily Summary Configuration
     DAILY_SUMMARY_HOUR: int = int(os.getenv("DAILY_SUMMARY_HOUR", "10"))
     DAILY_SUMMARY_TIMEZONE: str = os.getenv("DAILY_SUMMARY_TIMEZONE", "Asia/Jerusalem")
     
-    # Web Push (VAPID) Configuration
     # Generate keys with: npx web-push generate-vapid-keys
     VAPID_PUBLIC_KEY: str = os.getenv("VAPID_PUBLIC_KEY", "")
     VAPID_PRIVATE_KEY: str = os.getenv("VAPID_PRIVATE_KEY", "")
     VAPID_EMAIL: str = os.getenv("VAPID_EMAIL", "admin@nappi.app")
 
 
-# Create a single instance to be imported throughout the app
 settings = Settings()
-

@@ -1,3 +1,5 @@
+"""Baby-related database operations."""
+
 import json
 import logging
 from datetime import datetime
@@ -11,17 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 class BabyDataManager:
-    """
-    Manager class for baby-related database operations.
-    Provides type-safe methods using Pydantic models.
-    """
-
     def __init__(self):
         self.database = get_database()
 
-    # Used by: sensor_events.py (baby validation), endpoints.py (dashboard), tasks.py (sensor polling), daily_summary.py, optimal_stats.py, correlation_analyzer.py (baby context)
+    # Used by: sensor_events.py, endpoints.py, tasks.py, daily_summary.py, optimal_stats.py, correlation_analyzer.py
     async def get_babies_list(self) -> List[Babies]:
-
         async with self.database.session() as session:
             result = await session.execute(
                 text('SELECT * FROM "Nappi"."babies"'),
@@ -29,7 +25,7 @@ class BabyDataManager:
             rows = result.mappings().all()
             return [Babies(**row) for row in rows]
 
-    # Used by: tasks.py (sensor polling - inserts simulated sensor readings)
+    # Used by: tasks.py (sensor polling)
     async def insert_sleep_realtime_data(
             self,
             baby_id: int,
@@ -37,7 +33,6 @@ class BabyDataManager:
             humidity: Optional[float] = None,
             noise_decibel: Optional[float] = None,
     ) -> Optional[SleepRealtimeData]:
-
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -63,31 +58,18 @@ class BabyDataManager:
             logger.error(f"Failed to insert sleep data for baby {baby_id}: {e}")
             return None
 
-    # Used by: sensor_events.py (sleep-end endpoint - records awakening)
+    # Used by: sensor_events.py (sleep-end endpoint)
     async def set_baby_awaking_event(
             self,
             baby_id: int,
             event_metadata: Dict[str, Any]
     ) -> Optional[int]:
-        """
-        Record an awakening event for a baby.
-        
-        Args:
-            baby_id: The ID of the baby who woke up
-            event_metadata: Dictionary containing event details:
-                - sleep_started_at: ISO timestamp of when sleep began
-                - awakened_at: ISO timestamp of when baby woke up
-                - sleep_duration_minutes: Duration of sleep in minutes
-                - last_sensor_readings: Dict of last sensor values before wake
-        
-        Returns:
-            The ID of the created event, or None if insertion failed
-        """
+        """Record an awakening event for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        INSERT INTO "Nappi"."awakening_events" 
+                        INSERT INTO "Nappi"."awakening_events"
                         (baby_id, event_metadata)
                         VALUES (:baby_id, CAST(:event_metadata AS jsonb))
                         RETURNING id
@@ -108,20 +90,12 @@ class BabyDataManager:
             logger.error(f"Failed to insert awakening event for baby {baby_id}: {e}")
             return None
 
-    # Used by: sensor_events.py (sleep-end metadata), endpoints.py (dashboard), stats.py (last-sleep summary), chat_service.py (room context)
+    # Used by: sensor_events.py, endpoints.py, stats.py, chat_service.py
     async def get_last_sensor_readings(
             self,
             baby_id: int
     ) -> Optional[Dict[str, Any]]:
-        """
-        Get the most recent sensor readings for a baby.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            Dictionary with the last sensor readings, or None if no data
-        """
+        """Get the most recent sensor readings for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -142,24 +116,14 @@ class BabyDataManager:
             logger.error(f"Failed to get last sensor readings for baby {baby_id}: {e}")
             return None
 
-    # Used by: correlation_analyzer.py (sensor window before awakening), daily_summary.py (daily averages)
+    # Used by: correlation_analyzer.py, daily_summary.py
     async def get_sensor_data_range(
             self,
             baby_id: int,
             start_time: datetime,
             end_time: datetime
     ) -> List[Dict[str, Any]]:
-        """
-        Get sensor readings for a baby within a specific time range.
-        
-        Args:
-            baby_id: The ID of the baby
-            start_time: Start of the time window
-            end_time: End of the time window
-            
-        Returns:
-            List of sensor reading dictionaries ordered by datetime
-        """
+        """Get sensor readings for a baby within a time range."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -185,7 +149,7 @@ class BabyDataManager:
             )
             return []
 
-    # Used by: correlation_analyzer.py (stores correlation results after awakening analysis)
+    # Used by: correlation_analyzer.py
     async def insert_correlation(
             self,
             baby_id: int,
@@ -193,23 +157,12 @@ class BabyDataManager:
             parameters: Dict[str, Any],
             extra_data: Optional[str] = None
     ) -> Optional[int]:
-        """
-        Insert a correlation record for a baby's awakening.
-        
-        Args:
-            baby_id: The ID of the baby
-            correlation_time: The date/time of the correlation (awakening time)
-            parameters: Dictionary of sensor parameters that changed significantly
-            extra_data: Optional AI-generated insights
-            
-        Returns:
-            The ID of the created correlation, or None if insertion failed
-        """
+        """Insert a correlation record for a baby's awakening."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        INSERT INTO "Nappi"."correlations" 
+                        INSERT INTO "Nappi"."correlations"
                         (baby_id, time, parameters, extra_data)
                         VALUES (:baby_id, :correlation_time, CAST(:parameters AS jsonb), :extra_data)
                         RETURNING id
@@ -234,28 +187,14 @@ class BabyDataManager:
             logger.error(f"Failed to insert correlation for baby {baby_id}: {e}")
             return None
 
-    # ============================================
-    # Daily Summary Methods
-    # ============================================
-
-    # Used by: daily_summary.py (awakening counts), correlation_analyzer.py (recent awakenings count)
+    # Used by: daily_summary.py, correlation_analyzer.py
     async def get_awakening_events_for_period(
             self,
             baby_id: int,
             start_time: datetime,
             end_time: datetime
     ) -> List[Dict[str, Any]]:
-        """
-        Get awakening events for a baby within a specific time range.
-        
-        Args:
-            baby_id: The ID of the baby
-            start_time: Start of the time window
-            end_time: End of the time window
-            
-        Returns:
-            List of awakening event dictionaries
-        """
+        """Get awakening events for a baby within a time range."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -281,7 +220,7 @@ class BabyDataManager:
             )
             return []
 
-    # Used by: daily_summary.py (stores computed daily summary)
+    # Used by: daily_summary.py
     async def insert_daily_summary(
             self,
             baby_id: int,
@@ -293,22 +232,7 @@ class BabyDataManager:
             noon_awakes_sum: Optional[int] = None,
             night_awakes_sum: Optional[int] = None
     ) -> Optional[int]:
-        """
-        Insert a daily summary record for a baby.
-
-        Args:
-            baby_id: The ID of the baby
-            summary_date: The date of the summary
-            avg_humidity: Average humidity for the day
-            avg_temp: Average temperature for the day
-            avg_noise: Average noise level for the day
-            morning_awakes_sum: Count of awakenings during morning (6am-12pm)
-            noon_awakes_sum: Count of awakenings during noon (12pm-6pm)
-            night_awakes_sum: Count of awakenings during night (6pm-6am)
-
-        Returns:
-            The ID of the created summary, or None if insertion failed
-        """
+        """Insert a daily summary record for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -344,24 +268,14 @@ class BabyDataManager:
             logger.error(f"Failed to insert daily summary for baby {baby_id}: {e}")
             return None
 
-    # Used by: daily_summary.py (purges raw sensor data after summarization)
+    # Used by: daily_summary.py
     async def delete_sleep_data_for_period(
             self,
             baby_id: int,
             start_time: datetime,
             end_time: datetime
     ) -> int:
-        """
-        Delete sleep realtime data for a baby within a specific time range.
-        
-        Args:
-            baby_id: The ID of the baby
-            start_time: Start of the time window
-            end_time: End of the time window
-            
-        Returns:
-            Number of rows deleted
-        """
+        """Delete sleep realtime data for a baby within a time range."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -390,24 +304,12 @@ class BabyDataManager:
             )
             return 0
 
-    # ============================================
-    # Optimal Stats Methods
-    # ============================================
-
-    # Used by: optimal_stats.py (weighted average calculation across all history)
+    # Used by: optimal_stats.py
     async def get_all_daily_summaries(
             self,
             baby_id: int
     ) -> List[Dict[str, Any]]:
-        """
-        Get all daily summaries for a baby (all historical data).
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            List of daily summary dictionaries
-        """
+        """Get all daily summaries for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -429,7 +331,7 @@ class BabyDataManager:
             )
             return []
 
-    # Used by: optimal_stats.py (stores computed optimal conditions)
+    # Used by: optimal_stats.py
     async def upsert_optimal_stats(
             self,
             baby_id: int,
@@ -437,23 +339,9 @@ class BabyDataManager:
             humidity: Optional[float] = None,
             noise: Optional[float] = None
     ) -> Optional[int]:
-        """
-        Insert or update optimal stats for a baby.
-
-        If a record exists for the baby, update it. Otherwise, insert a new one.
-
-        Args:
-            baby_id: The ID of the baby
-            temperature: Optimal temperature
-            humidity: Optimal humidity
-            noise: Optimal noise level
-            
-        Returns:
-            The ID of the upserted record, or None if operation failed
-        """
+        """Insert or update optimal stats for a baby."""
         try:
             async with self.database.session() as session:
-                # Use PostgreSQL's INSERT ... ON CONFLICT for upsert
                 result = await session.execute(
                     text('''
                         INSERT INTO "Nappi"."optimal_stats"
@@ -487,28 +375,14 @@ class BabyDataManager:
             logger.error(f"Failed to upsert optimal stats for baby {baby_id}: {e}")
             return None
 
-    # ============================================
-    # Statistics Methods
-    # ============================================
-
-    # Used by: stats.py (environment chart data), trend_analyzer.py (trend analysis), chat_service.py (weekly summary context)
+    # Used by: stats.py, trend_analyzer.py, chat_service.py
     async def get_daily_summaries_range(
             self,
             baby_id: int,
             start_date: date_type,
             end_date: date_type
     ) -> List[Dict[str, Any]]:
-        """
-        Get daily summaries for a baby within a date range.
-        
-        Args:
-            baby_id: The ID of the baby
-            start_date: Start date (inclusive)
-            end_date: End date (inclusive)
-            
-        Returns:
-            List of daily summary dictionaries with sensor averages
-        """
+        """Get daily summaries for a baby within a date range."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -534,30 +408,19 @@ class BabyDataManager:
             )
             return []
 
-    # Used by: stats.py (sleep patterns endpoint), chat_service.py (sleep pattern context), schedule_predictor.py (schedule prediction)
+    # Used by: stats.py, chat_service.py, schedule_predictor.py
     async def get_sleep_sessions_for_month(
             self,
             baby_id: int,
             year: int,
             month: int
     ) -> List[Dict[str, Any]]:
-        """
-        Get all sleep sessions for a baby in a specific month.
-        Extracts sleep_started_at and awakened_at from event_metadata.
-        
-        Args:
-            baby_id: The ID of the baby
-            year: Year (e.g., 2026)
-            month: Month (1-12)
-            
-        Returns:
-            List of dictionaries with sleep_started_at, awakened_at, duration_minutes
-        """
+        """Get sleep sessions for a baby in a specific month."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        SELECT 
+                        SELECT
                             event_metadata->>'sleep_started_at' as sleep_started_at,
                             event_metadata->>'awakened_at' as awakened_at,
                             (event_metadata->>'sleep_duration_minutes')::float as duration_minutes
@@ -581,25 +444,14 @@ class BabyDataManager:
             )
             return []
 
-    # Used by: stats.py (daily sleep totals endpoint), trend_analyzer.py (trend analysis)
+    # Used by: stats.py, trend_analyzer.py
     async def get_sleep_sessions_for_range(
             self,
             baby_id: int,
             start_date: date_type,
             end_date: date_type
     ) -> List[Dict[str, Any]]:
-        """
-        Get all sleep sessions for a baby within a date range.
-        Used for calculating daily sleep totals.
-        
-        Args:
-            baby_id: The ID of the baby
-            start_date: Start date (inclusive)
-            end_date: End date (inclusive)
-            
-        Returns:
-            List of dictionaries with awakened_at date and duration_minutes
-        """
+        """Get sleep sessions for a baby within a date range."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -629,17 +481,9 @@ class BabyDataManager:
             )
             return []
 
-    # Used by: stats.py (validate_baby_exists helper for all stats endpoints)
+    # Used by: stats.py
     async def baby_exists(self, baby_id: int) -> bool:
-        """
-        Check if a baby exists in the database.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            True if baby exists, False otherwise
-        """
+        """Check if a baby exists in the database."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -651,27 +495,18 @@ class BabyDataManager:
             logger.error(f"Failed to check if baby {baby_id} exists: {e}")
             return False
 
-    # Used by: stats.py (single awakening detail endpoint, enhanced analysis endpoint)
+    # Used by: stats.py
     async def get_awakening_event_by_id(
             self,
             event_id: int,
             baby_id: int
     ) -> Optional[Dict[str, Any]]:
-        """
-        Get a specific awakening event by ID.
-        
-        Args:
-            event_id: The ID of the awakening event
-            baby_id: The ID of the baby (for validation)
-            
-        Returns:
-            Dictionary with event data or None if not found
-        """
+        """Get a specific awakening event by ID."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        SELECT 
+                        SELECT
                             id,
                             baby_id,
                             (event_metadata->>'sleep_started_at')::timestamp as sleep_started_at,
@@ -689,25 +524,17 @@ class BabyDataManager:
             logger.error(f"Failed to get awakening event {event_id}: {e}")
             return None
 
-    # Used by: stats.py (latest awakening fallback, last-sleep summary), schedule_predictor.py (last wake time)
+    # Used by: stats.py, schedule_predictor.py
     async def get_latest_awakening_event(
             self,
             baby_id: int
     ) -> Optional[Dict[str, Any]]:
-        """
-        Get the most recent awakening event for a baby.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            Dictionary with event data or None if no events found
-        """
+        """Get the most recent awakening event for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        SELECT 
+                        SELECT
                             id,
                             baby_id,
                             (event_metadata->>'sleep_started_at')::timestamp as sleep_started_at,
@@ -727,26 +554,16 @@ class BabyDataManager:
             logger.error(f"Failed to get latest awakening event for baby {baby_id}: {e}")
             return None
 
-    # Used by: sensor_events.py (sleep-end - attaches quick AI insight to awakening event)
+    # Used by: sensor_events.py (sleep-end - attaches AI insight)
     async def update_awakening_event_insight(
             self,
             event_id: int,
             insight: str
     ) -> bool:
-        """
-        Update an awakening event's event_metadata with AI-generated insight.
-        
-        Args:
-            event_id: The ID of the awakening event
-            insight: The AI-generated insight text
-            
-        Returns:
-            True if successful, False otherwise
-        """
+        """Update an awakening event's event_metadata with AI-generated insight."""
         try:
             import json
             async with self.database.session() as session:
-                # Get current event_metadata, add insight, and update
                 result = await session.execute(
                     text('''
                         SELECT event_metadata FROM "Nappi"."awakening_events"
@@ -776,17 +593,9 @@ class BabyDataManager:
             logger.error(f"Failed to update awakening event {event_id} with insight: {e}")
             return False
 
-    # Used by: stats.py (optimal stats endpoint), chat_service.py (chat context)
+    # Used by: stats.py, chat_service.py
     async def get_optimal_stats(self, baby_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get the optimal sleep conditions for a baby.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            Dictionary with optimal temperature, humidity, noise or None if no data
-        """
+        """Get the optimal sleep conditions for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -804,21 +613,9 @@ class BabyDataManager:
             logger.error(f"Failed to get optimal stats for baby {baby_id}: {e}")
             return None
 
-    # ============================================
-    # Baby Notes Methods (Multi-Note System)
-    # ============================================
-
-    # Used by: babies.py (list notes endpoint), correlation_analyzer.py (baby context), self.get_baby_notes_formatted()
+    # Used by: babies.py, correlation_analyzer.py, self.get_baby_notes_formatted()
     async def get_baby_notes(self, baby_id: int) -> List[BabyNote]:
-        """
-        Get all notes for a baby from the baby_notes table.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            List of BabyNote objects
-        """
+        """Get all notes for a baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -843,19 +640,8 @@ class BabyDataManager:
             title: str,
             content: str
     ) -> Optional[BabyNote]:
-        """
-        Create a new note for a baby.
-        
-        Args:
-            baby_id: The ID of the baby
-            title: Note title (max 200 chars)
-            content: Note content
-            
-        Returns:
-            Created BabyNote object or None if failed
-        """
+        """Create a new note for a baby."""
         try:
-            # Truncate title to 200 chars
             truncated_title = title[:200] if title else "Untitled"
 
             async with self.database.session() as session:
@@ -885,20 +671,8 @@ class BabyDataManager:
             title: str,
             content: str
     ) -> Optional[BabyNote]:
-        """
-        Update an existing note.
-        
-        Args:
-            note_id: The ID of the note to update
-            baby_id: The ID of the baby (for validation)
-            title: Updated title
-            content: Updated content
-            
-        Returns:
-            Updated BabyNote object or None if failed
-        """
+        """Update an existing note."""
         try:
-            # Truncate title to 200 chars
             truncated_title = title[:200] if title else "Untitled"
 
             async with self.database.session() as session:
@@ -923,16 +697,7 @@ class BabyDataManager:
 
     # Used by: babies.py (delete note endpoint)
     async def delete_baby_note(self, note_id: int, baby_id: int) -> bool:
-        """
-        Delete a note.
-        
-        Args:
-            note_id: The ID of the note to delete
-            baby_id: The ID of the baby (for validation)
-            
-        Returns:
-            True if deleted, False otherwise
-        """
+        """Delete a note."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -952,17 +717,9 @@ class BabyDataManager:
             logger.error(f"Failed to delete note {note_id} for baby {baby_id}: {e}")
             return False
 
-    # Used by: chat_service.py (AI chat context - parent notes)
+    # Used by: chat_service.py (AI chat context)
     async def get_baby_notes_formatted(self, baby_id: int) -> str:
-        """
-        Get all notes for a baby formatted as a string for AI context.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            Formatted string of all notes or empty string if none
-        """
+        """Get all notes for a baby formatted as string for AI context."""
         notes = await self.get_baby_notes(baby_id)
         if not notes:
             return ""
@@ -973,23 +730,14 @@ class BabyDataManager:
 
         return "\n".join(formatted)
 
-    # Used by: chat.py (ownership check before chat), babies.py (ownership check for notes CRUD)
+    # Used by: chat.py, babies.py
     async def validate_baby_ownership(self, user_id: int, baby_id: int) -> bool:
-        """
-        Validate that a user owns a specific baby.
-        
-        Args:
-            user_id: The ID of the user
-            baby_id: The ID of the baby
-            
-        Returns:
-            True if user owns the baby, False otherwise
-        """
+        """Validate that a user owns a specific baby."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        SELECT 1 FROM "Nappi"."users" 
+                        SELECT 1 FROM "Nappi"."users"
                         WHERE id = :user_id AND baby_id = :baby_id
                     '''),
                     {"user_id": user_id, "baby_id": baby_id}
@@ -999,17 +747,9 @@ class BabyDataManager:
             logger.error(f"Failed to validate baby ownership for user {user_id}, baby {baby_id}: {e}")
             return False
 
-    # Used by: chat_service.py (baby profile for AI context), stats.py (last-sleep summary), trend_analyzer.py (age calculation), schedule_predictor.py (age/baby info)
+    # Used by: chat_service.py, stats.py, trend_analyzer.py, schedule_predictor.py
     async def get_baby_by_id(self, baby_id: int) -> Optional[Babies]:
-        """
-        Get a baby by ID.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            Babies object or None if not found
-        """
+        """Get a baby by ID."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -1024,31 +764,18 @@ class BabyDataManager:
             logger.error(f"Failed to get baby {baby_id}: {e}")
             return None
 
-    # ============================================
-    # Chat Context Methods
-    # ============================================
-
-    # Used by: chat_service.py (recent sleep blocks for AI chat context)
+    # Used by: chat_service.py
     async def get_recent_awakenings_with_insights(
             self,
             baby_id: int,
             limit: int = 5
     ) -> List[Dict[str, Any]]:
-        """
-        Get recent awakening events with their AI insights for chat context.
-        
-        Args:
-            baby_id: The ID of the baby
-            limit: Maximum number of events to return
-            
-        Returns:
-            List of dictionaries with awakening details and AI insights
-        """
+        """Get recent awakening events with AI insights for chat context."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        SELECT 
+                        SELECT
                             id,
                             (event_metadata->>'awakened_at')::timestamp as awakened_at,
                             (event_metadata->>'sleep_duration_minutes')::float as sleep_duration_minutes,
@@ -1067,27 +794,18 @@ class BabyDataManager:
             logger.error(f"Failed to get recent awakenings for baby {baby_id}: {e}")
             return []
 
-    # Used by: chat_service.py (awakening cause analysis for AI chat context)
+    # Used by: chat_service.py
     async def get_recent_correlations(
             self,
             baby_id: int,
             limit: int = 5
     ) -> List[Dict[str, Any]]:
-        """
-        Get recent correlation analyses (awakening causes) for chat context.
-        
-        Args:
-            baby_id: The ID of the baby
-            limit: Maximum number of correlations to return
-            
-        Returns:
-            List of dictionaries with correlation details (time, parameters, AI analysis)
-        """
+        """Get recent correlation analyses for chat context."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        SELECT 
+                        SELECT
                             id,
                             time,
                             parameters,
