@@ -833,16 +833,19 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
 
             loop = asyncio.get_event_loop()
             model_name = settings.GEMINI_MODEL_INSIGHTS
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=GEMINI_INSIGHTS_TEMPERATURE,
-                        max_output_tokens=GEMINI_INSIGHTS_MAX_TOKENS,
-                    ),
-                )
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=GEMINI_INSIGHTS_TEMPERATURE,
+                            max_output_tokens=GEMINI_INSIGHTS_MAX_TOKENS,
+                        ),
+                    )
+                ),
+                timeout=15.0
             )
 
             if response and response.text:
