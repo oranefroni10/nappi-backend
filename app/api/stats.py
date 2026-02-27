@@ -797,7 +797,7 @@ def _generate_quick_insights(
     if environment.status == "optimal":
         insights.append("Room conditions are ideal for sleep")
     elif environment.status == "needs_attention":
-        insights.append(f"Room {environment.message.lower()}")
+        insights.append(environment.message.lower())
 
     if weekly_trend == "improving":
         insights.append("Sleep quality trending upward this week")
