@@ -1,4 +1,20 @@
-"""Alerts API — SSE stream, alert history/CRUD, push notification subscription."""
+"""
+Alerts API — real-time SSE stream, alert management, and push notification subscription.
+
+Routes (/alerts):
+  GET    /stream          - SSE stream for real-time alerts
+  GET    /history         - Paginated alert history
+  GET    /unread-count    - Unread alert count
+  POST   /{alert_id}/read - Mark single alert as read
+  POST   /read-all        - Mark all alerts as read
+  DELETE /                - Delete alerts by IDs
+
+Routes (/push):
+  GET    /vapid-key    - VAPID public key for client subscription
+  POST   /subscribe    - Save push subscription
+  POST   /unsubscribe  - Remove push subscription
+  GET    /status       - Check if user has active push subscription
+"""
 
 import asyncio
 import json

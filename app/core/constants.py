@@ -1,3 +1,5 @@
+"""Clinical thresholds, age-based recommendations, and app-level tuning constants."""
+
 # ── TEMPERATURE THRESHOLDS ────────────────────────────────────────────────────
 # source: Franco et al., "Ambient Temperature is Associated with Changes in Infants' Arousability from Sleep," SLEEP Vol.24 No.3, 2001, pp.325-329
 # place:  p.325 col.2 para.2 (Methods → Monitoring Procedures); p.325 col.2 Abstract; p.329 col.1 last para (Discussion)

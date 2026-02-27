@@ -1,3 +1,12 @@
+"""
+APScheduler setup — three recurring jobs.
+
+Jobs:
+  - Sensor collection: every SENSOR_POLL_INTERVAL_SECONDS (sleeping babies only)
+  - Daily summary:     DAILY_SUMMARY_HOUR:00 (aggregates previous 24h, deletes raw data)
+  - Optimal stats:     DAILY_SUMMARY_HOUR:05 (recalculates weighted optimal conditions)
+"""
+
 import logging
 from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

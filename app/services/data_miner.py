@@ -1,3 +1,5 @@
+"""HTTP client for fetching live sensor readings from the M5 hardware API."""
+
 import aiohttp
 import logging
 from typing import Protocol, Optional, Dict, Any

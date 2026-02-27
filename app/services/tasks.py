@@ -1,3 +1,5 @@
+"""Scheduled task — collects sensor data for sleeping babies and checks alert thresholds."""
+
 import asyncio
 import logging
 from typing import Dict, Any, List

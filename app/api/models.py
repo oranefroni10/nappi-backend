@@ -1,3 +1,5 @@
+"""Pydantic request/response models for all API endpoints."""
+
 from pydantic import BaseModel, field_validator
 from datetime import datetime, date
 from typing import List, Optional, Literal

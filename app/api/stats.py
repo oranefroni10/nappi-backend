@@ -1,4 +1,17 @@
-"""Stats API — sensor, sleep, trends, AI insights."""
+"""
+Stats API — sensor history, sleep analytics, AI-powered insights.
+
+Routes (/stats):
+  GET /sensors              - Daily sensor averages over a date range
+  GET /sleep-patterns       - Clustered sleep patterns for a given month
+  GET /daily-sleep          - Daily sleep totals over a date range
+  GET /optimal              - Learned optimal room conditions per baby
+  GET /trends               - Weekly + monthly trend analysis with optional AI summary
+  GET /schedule-prediction  - Next predicted sleep time based on wake windows + patterns
+  GET /ai-summary           - Combined dashboard summary (environment, sleep, tip, insights)
+  GET /insights             - AI analysis for a specific awakening event
+  GET /insights-enhanced    - Structured multi-section AI analysis for an awakening event
+"""
 
 import asyncio
 import logging

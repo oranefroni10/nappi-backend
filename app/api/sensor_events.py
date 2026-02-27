@@ -1,4 +1,15 @@
-"""Sensor event endpoints — sleep start/end from M5 sensors + parent intervention."""
+"""
+Sensor event endpoints — sleep lifecycle from M5 hardware + parent manual override.
+
+Routes (/sensor):
+  POST /sleep-start          - M5 reports baby fell asleep (ignored during cooldown)
+  POST /sleep-end            - M5 reports baby woke up; creates awakening event + alert
+  POST /baby-away            - M5 reports baby removed from crib; stops tracking silently
+  POST /intervention         - Parent manual override (mark asleep/awake); starts 20min cooldown
+  GET  /sleep-status/{baby_id}    - Current sleep state for a baby
+  GET  /sleeping-babies          - List all currently sleeping babies (debug)
+  GET  /cooldown-status/{baby_id} - Check if intervention cooldown is active
+"""
 
 import logging
 from datetime import datetime

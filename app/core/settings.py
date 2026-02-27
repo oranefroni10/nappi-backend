@@ -1,3 +1,5 @@
+"""App settings — loaded from environment variables with defaults."""
+
 import os
 from typing import List
 from dotenv import load_dotenv

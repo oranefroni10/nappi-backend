@@ -1,4 +1,12 @@
-"""Auth endpoints — signup, signin, register-baby, change-password."""
+"""
+Auth endpoints — user registration, login, baby linking.
+
+Routes (/auth):
+  POST /signup          - Register user; optionally match existing baby by name + birthdate
+  POST /register-baby   - Create and link a new baby to an existing user
+  POST /signin          - Authenticate with username + password
+  POST /change-password - Update password (requires old password)
+"""
 
 from typing import Optional
 from fastapi import APIRouter, HTTPException, status

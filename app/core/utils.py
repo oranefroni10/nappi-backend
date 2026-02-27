@@ -1,3 +1,5 @@
+"""Shared lookup maps — sensor names to API endpoints and DB columns."""
+
 from typing import Dict
 
 # Used by: scheduler.py, tasks.py, endpoints.py, stats.py — sensor name → API endpoint

@@ -1,3 +1,5 @@
+"""Pydantic models mirroring the Nappi database schema."""
+
 # Generated from database schema — regenerate with 'python generate_models.py'
 # WARNING: regeneration overwrites this file — re-add manual additions from the bottom section
 

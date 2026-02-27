@@ -1,3 +1,5 @@
+"""FastAPI app — lifespan, CORS, router registration."""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager

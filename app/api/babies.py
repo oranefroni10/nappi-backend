@@ -1,4 +1,12 @@
-"""Baby API — multi-note CRUD for baby notes."""
+"""
+Baby API — CRUD for baby notes (allergies, health, preferences).
+
+Routes (/babies):
+  GET    /{baby_id}/notes             - List all notes for a baby
+  POST   /{baby_id}/notes             - Create a new note
+  PUT    /{baby_id}/notes/{note_id}   - Update an existing note
+  DELETE /{baby_id}/notes/{note_id}   - Delete a note
+"""
 
 import logging
 from typing import List, Optional

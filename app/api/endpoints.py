@@ -1,4 +1,10 @@
-"""Dashboard endpoints — last sleep summary and current room metrics."""
+"""
+Dashboard endpoints — last sleep summary and live room conditions.
+
+Routes (no prefix):
+  GET /sleep/latest  - Last sleep session summary (duration, awakenings, avg sensors)
+  GET /room/current  - Live sensor readings; falls back to last DB reading if sensors offline
+"""
 
 import asyncio
 import logging
