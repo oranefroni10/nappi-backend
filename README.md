@@ -28,7 +28,7 @@ Backend API for baby sleep and room monitoring system. This FastAPI application 
 
 **Nappi** is a baby monitoring system that:
 - Tracks sleep patterns and quality
-- Monitors room environment (temperature, humidity, noise — 3 sensors only)
+- Monitors room environment (temperature, humidity, noise - 3 sensors only)
 - Collects data from IoT sensors (M5 devices) every 5 seconds during sleep
 - Analyzes awakening correlations with AI-powered insights (Google Gemini)
 - Learns optimal sleep conditions for each baby via weighted averages
@@ -41,12 +41,12 @@ Backend API for baby sleep and room monitoring system. This FastAPI application 
 
 ## Tech Stack
 
-- **Framework**: [FastAPI](https://fastapi.tiangolo.com/) — async Python web framework
-- **Database**: PostgreSQL (Neon serverless) with [SQLAlchemy 2.0](https://www.sqlalchemy.org/) async — raw SQL via `text()`, no ORM
+- **Framework**: [FastAPI](https://fastapi.tiangolo.com/) - async Python web framework
+- **Database**: PostgreSQL (Neon serverless) with [SQLAlchemy 2.0](https://www.sqlalchemy.org/) async - raw SQL via `text()`, no ORM
 - **Background Jobs**: [APScheduler](https://apscheduler.readthedocs.io/) (AsyncIOScheduler)
-- **HTTP Client**: [aiohttp](https://docs.aiohttp.org/) — sensor API polling
+- **HTTP Client**: [aiohttp](https://docs.aiohttp.org/) - sensor API polling
 - **Data Validation**: [Pydantic](https://docs.pydantic.dev/) v2
-- **AI**: [Google Gemini](https://ai.google.dev/) (`gemini-2.5-flash`) — chat, insights, trends. Sync SDK, run in executor.
+- **AI**: [Google Gemini](https://ai.google.dev/) (`gemini-2.5-flash`) - chat, insights, trends. Sync SDK, run in executor.
 - **Real-time**: SSE via `asyncio.Queue` per user connection
 - **Push Notifications**: [pywebpush](https://github.com/web-push-libs/pywebpush) with VAPID
 
@@ -183,8 +183,8 @@ Configuration lives in `app/core/settings.py`, loaded from environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_CONNECTION_STRING` | — | PostgreSQL connection string (asyncpg) |
-| `GEMINI_API_KEY` | — | Google Gemini API key |
+| `DB_CONNECTION_STRING` | - | PostgreSQL connection string (asyncpg) |
+| `GEMINI_API_KEY` | - | Google Gemini API key |
 | `GEMINI_MODEL_CHAT` | `models/gemini-2.5-flash` | Model for chat |
 | `GEMINI_MODEL_INSIGHTS` | `models/gemini-2.5-flash` | Model for insights |
 | `SENSOR_API_BASE_URL` | `http://localhost:8001` | Sensor hub URL |
@@ -192,8 +192,8 @@ Configuration lives in `app/core/settings.py`, loaded from environment variables
 | `CORRELATION_TIME_WINDOW_MINUTES` | `60` | Time window to analyze before awakening |
 | `DAILY_SUMMARY_HOUR` | `10` | Hour to run daily jobs (24h) |
 | `DAILY_SUMMARY_TIMEZONE` | `Asia/Jerusalem` | Timezone for daily jobs |
-| `VAPID_PUBLIC_KEY` | — | Web Push public key |
-| `VAPID_PRIVATE_KEY` | — | Web Push private key |
+| `VAPID_PUBLIC_KEY` | - | Web Push public key |
+| `VAPID_PRIVATE_KEY` | - | Web Push private key |
 | `VAPID_EMAIL` | `admin@nappi.app` | VAPID contact email |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
@@ -245,8 +245,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/auth/signup` | Create user; search for existing baby by name+birthdate |
-| `POST` | `/auth/signin` | Login; return user + baby |
+| `POST` | `/auth/signup` | Create user, search for existing baby by name+birthdate |
+| `POST` | `/auth/signin` | Login, return user + baby |
 | `POST` | `/auth/register-baby` | Create baby + link to user |
 | `POST` | `/auth/change-password` | Update password |
 
@@ -285,12 +285,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/sensor/sleep-start` | Baby fell asleep — start sensor collection |
-| `POST` | `/sensor/sleep-end` | Baby woke up — record event, trigger AI insight + alert |
-| `POST` | `/sensor/baby-away` | Baby left sensor area — stop collection, no event |
+| `POST` | `/sensor/sleep-start` | Baby fell asleep - start sensor collection |
+| `POST` | `/sensor/sleep-end` | Baby woke up - record event, trigger AI insight + alert |
+| `POST` | `/sensor/baby-away` | Baby left sensor area - stop collection, no event |
 | `GET` | `/sensor/sleep-status/{baby_id}` | Is baby sleeping? |
 | `GET` | `/sensor/sleeping-babies` | All currently sleeping babies |
-| `POST` | `/sensor/intervention` | Parent override (mark_asleep/mark_awake) — 20min cooldown |
+| `POST` | `/sensor/intervention` | Parent override (mark_asleep/mark_awake) - 20min cooldown |
 | `GET` | `/sensor/cooldown-status/{baby_id}` | Check intervention cooldown |
 
 ### Statistics (`/stats`)
@@ -381,7 +381,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 - Builds full baby context: profile, notes, optimal stats, last 5 awakenings (as sleep blocks), correlations, 7-day summaries, sleep patterns, current room
 - Source-cited age-specific guidelines (Cleveland Clinic, AAP, Sleep Foundation)
-- Gentle, supportive tone — never alarming
+- Gentle, supportive tone - never alarming
 
 ### 4. Optimal Conditions Calculator
 
@@ -392,7 +392,7 @@ weight = 1 / (1 + total_awakenings)
 optimal_value = SUM(value * weight) / SUM(weight)
 ```
 
-Days with fewer awakenings get higher weight — result represents conditions that historically worked best.
+Days with fewer awakenings get higher weight - result represents conditions that historically worked best.
 
 ### 5. Schedule Prediction
 
@@ -439,7 +439,7 @@ Implemented in `app/services/sleep_patterns.py`.
 
 1. Convert each session's start time to decimal hours (e.g., 8:30 → 8.5)
 2. Sort all sessions by start hour (time of day, ignoring date)
-3. Walk through sorted sessions — if the gap between consecutive start times > 2h, start a new cluster
+3. Walk through sorted sessions - if the gap between consecutive start times > 2h, start a new cluster
 4. Label each cluster by its average start hour:
    - `5:00–11:00` → "Morning nap"
    - `11:00–17:00` → "Afternoon nap"
@@ -461,24 +461,24 @@ Given 8 sleep sessions recorded over a month:
 | G       | 20:00 | 05:45 |
 | H       | 21:00 | 06:30 |
 
-**Step 1 — Sort by start hour (decimal):**
+**Step 1 - Sort by start hour (decimal):**
 
 ```
 C(8.75) → A(9.0) → B(9.5) → D(13.0) → E(13.25) → G(20.0) → F(20.5) → H(21.0)
 ```
 
-**Step 2 — Cluster using 2h gap threshold:**
+**Step 2 - Cluster using 2h gap threshold:**
 
 ```
 C ─0.25h─ A ─0.5h─ B ──3.5h──> D ─0.25h─ E ──6.75h──> G ─0.5h─ F ─0.5h─ H
 |____Cluster 1____|   (gap!)   |_Cluster 2_|   (gap!)   |____Cluster 3____|
 ```
 
-- **Cluster 1**: C, A, B — gaps of 0.25h and 0.5h (both < 2h)
-- **Cluster 2**: D, E — gap of 0.25h (< 2h)
-- **Cluster 3**: G, F, H — gaps of 0.5h and 0.5h (both < 2h)
+- **Cluster 1**: C, A, B - gaps of 0.25h and 0.5h (both < 2h)
+- **Cluster 2**: D, E - gap of 0.25h (< 2h)
+- **Cluster 3**: G, F, H - gaps of 0.5h and 0.5h (both < 2h)
 
-**Step 3 — Label & compute averages:**
+**Step 3 - Label & compute averages:**
 
 | Cluster | Label          | Avg Start | Avg End | Avg Duration | Sessions | Range        |
 |---------|----------------|-----------|---------|--------------|----------|--------------|
@@ -521,9 +521,9 @@ awakenings_per_session = total_awakenings_that_day / total_sessions_that_day
 
 **How to read it:**
 
-- **Line going down** = improvement — baby is sleeping more continuously with fewer interruptions
-- **Line going up** = more fragmented sleep — baby is waking more often within sessions
-- **Value of 0** = no awakenings at all — every session was uninterrupted
+- **Line going down** = improvement - baby is sleeping more continuously with fewer interruptions
+- **Line going up** = more fragmented sleep - baby is waking more often within sessions
+- **Value of 0** = no awakenings at all - every session was uninterrupted
 - **Value of 1** = on average, baby woke once per session
 
 This metric is more useful than raw awakening counts because it normalizes against the number of sessions. A day with 4 awakenings across 4 naps (ratio 1.0) is very different from 4 awakenings in a single night sleep (ratio 4.0).
@@ -632,7 +632,7 @@ async with db.session() as session:
 ### Gemini Pattern
 
 ```python
-# Gemini SDK is synchronous — MUST run in executor
+# Gemini SDK is synchronous - MUST run in executor
 loop = asyncio.get_event_loop()
 response = await loop.run_in_executor(
     None,
@@ -669,7 +669,7 @@ DB_CONNECTION_STRING=postgresql+asyncpg://user:pass@host:5432/dbname
 
 ### Gemini API errors
 
-- **429 Rate Limit**: System falls back gracefully — correlation saved without AI insights
+- **429 Rate Limit**: System falls back gracefully - correlation saved without AI insights
 - **SSL errors on macOS**: `pip install certifi`
 
 ### Scheduler not running
@@ -700,14 +700,14 @@ The AI chat (`chat_service.py`) and schedule predictor (`schedule_predictor.py`)
 
 | Source | What We Use It For |
 |--------|-------------------|
-| **AAP/AASM** — [AAP endorses AASM consensus](https://publications.aap.org/aapnews/news/6630/AAP-endorses-new-recommendations-on-sleep-times) / [AASM study (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC4877308/) | Total sleep recommendations (4mo+), sleep training age guidance |
-| **National Sleep Foundation** — [How Much Sleep Do You Need](https://www.thensf.org/how-many-hours-of-sleep-do-you-really-need/) | Total sleep recommendations (all ages including 0-3mo) |
-| **CDC** — [About Sleep](https://www.cdc.gov/sleep/about/index.html) | Total sleep ranges |
-| **WHO** — [24-Hour Movement Guidelines](https://www.who.int/publications-detail-redirect/9789241550536) | Total sleep for infants and toddlers |
-| **Cleveland Clinic** — [Wake Windows by Age](https://health.clevelandclinic.org/wake-windows-by-age) / [Sleep Training](https://health.clevelandclinic.org/when-and-how-to-sleep-train-your-baby) | Wake window ranges (primary source), sleep training readiness |
-| **Mayo Clinic** — [Baby Sleep](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/in-depth/baby-sleep/art-20045014) / [Baby Naps](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/in-depth/baby-naps/art-20047421) | Night sleep consolidation milestones, nap guidance |
-| **Stanford Children's Health** — [Infant Sleep](https://www.stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237) | Newborn sleep patterns, total sleep |
-| **Sleep Foundation** — [Baby Sleep Needs](https://www.sleepfoundation.org/children-and-sleep/how-much-sleep-do-kids-need) / [Room Temperature](https://www.sleepfoundation.org/baby-sleep/best-room-temperature-for-sleeping-baby) | Nap counts, daytime sleep, sleep regressions, bedtime ranges, room temp |
+| **AAP/AASM** - [AAP endorses AASM consensus](https://publications.aap.org/aapnews/news/6630/AAP-endorses-new-recommendations-on-sleep-times) / [AASM study (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC4877308/) | Total sleep recommendations (4mo+), sleep training age guidance |
+| **National Sleep Foundation** - [How Much Sleep Do You Need](https://www.thensf.org/how-many-hours-of-sleep-do-you-really-need/) | Total sleep recommendations (all ages including 0-3mo) |
+| **CDC** - [About Sleep](https://www.cdc.gov/sleep/about/index.html) | Total sleep ranges |
+| **WHO** - [24-Hour Movement Guidelines](https://www.who.int/publications-detail-redirect/9789241550536) | Total sleep for infants and toddlers |
+| **Cleveland Clinic** - [Wake Windows by Age](https://health.clevelandclinic.org/wake-windows-by-age) / [Sleep Training](https://health.clevelandclinic.org/when-and-how-to-sleep-train-your-baby) | Wake window ranges (primary source), sleep training readiness |
+| **Mayo Clinic** - [Baby Sleep](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/in-depth/baby-sleep/art-20045014) / [Baby Naps](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/in-depth/baby-naps/art-20047421) | Night sleep consolidation milestones, nap guidance |
+| **Stanford Children's Health** - [Infant Sleep](https://www.stanfordchildrens.org/en/topic/default?id=infant-sleep-90-P02237) | Newborn sleep patterns, total sleep |
+| **Sleep Foundation** - [Baby Sleep Needs](https://www.sleepfoundation.org/children-and-sleep/how-much-sleep-do-kids-need) / [Room Temperature](https://www.sleepfoundation.org/baby-sleep/best-room-temperature-for-sleeping-baby) | Nap counts, daytime sleep, sleep regressions, bedtime ranges, room temp |
 
 ### Data Point Summary
 
