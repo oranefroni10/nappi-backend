@@ -761,19 +761,28 @@ Be warm, practical, and reassuring. Frame tips as gentle suggestions, not orders
             significant_changes = self._filter_significant_changes(parameter_changes)
             parameters_dict = self._build_parameters_dict(significant_changes)
             baby_context = await self._get_baby_context(baby_id, awakened_at, sensor_data)
-            structured_insight = await self._generate_enhanced_insights(
-                baby_id=baby_id,
-                awakened_at=awakened_at,
-                sleep_duration_minutes=sleep_duration_minutes,
-                parameter_changes=significant_changes,
-                baby_context=baby_context
+            structured_insight, simple_insight = await asyncio.gather(
+                self._generate_enhanced_insights(
+                    baby_id=baby_id,
+                    awakened_at=awakened_at,
+                    sleep_duration_minutes=sleep_duration_minutes,
+                    parameter_changes=significant_changes,
+                    baby_context=baby_context
+                ),
+                generate_quick_insight(
+                    baby_id=baby_id,
+                    awakened_at=awakened_at,
+                    sleep_duration_minutes=sleep_duration_minutes,
+                    last_sensor_readings=baby_context.last_sensor_values if baby_context else None
+                ),
+                return_exceptions=True  # so one failure doesn't crash the other
             )
-            simple_insight = await generate_quick_insight(
-                baby_id=baby_id,
-                awakened_at=awakened_at,
-                sleep_duration_minutes=sleep_duration_minutes,
-                last_sensor_readings=baby_context.last_sensor_values if baby_context else None
-            )
+
+            # Handle the case where gather returns an exception instead of a value:
+            if isinstance(structured_insight, Exception):
+                structured_insight = None
+            if isinstance(simple_insight, Exception):
+                simple_insight = None
             insights_text = structured_insight.raw_text if structured_insight else None
             correlation_id = await self.baby_manager.insert_correlation(
                 baby_id=baby_id,
