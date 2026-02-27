@@ -211,7 +211,7 @@ CORRELATION_CHANGE_THRESHOLDS: dict = {
 
 ### Sensor Mapping (`app/core/utils.py`)
 
-3 sensors only (heart_rate removed):
+3 sensors only:
 
 ```python
 SENSOR_TO_ENDPOINT_MAP = {
@@ -583,7 +583,6 @@ All tables under schema `"Nappi"` (double-quoted, case-sensitive in all queries)
 
 ### Notes
 
-- `heart_rate` column exists in `sleep_realtime_data` and `optimal_stats` but is **no longer written or queried**
 - Two separate notes systems: `babies.notes` (single text column for health info) and `baby_notes` table (multi-entry CRUD)
 - All queries must use `"Nappi"."table_name"` schema prefix
 
@@ -703,7 +702,7 @@ The AI chat (`chat_service.py`) and schedule predictor (`schedule_predictor.py`)
 |--------|-------------------|
 | **AAP/AASM** — [AAP endorses AASM consensus](https://publications.aap.org/aapnews/news/6630/AAP-endorses-new-recommendations-on-sleep-times) / [AASM study (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC4877308/) | Total sleep recommendations (4mo+), sleep training age guidance |
 | **National Sleep Foundation** — [How Much Sleep Do You Need](https://www.thensf.org/how-many-hours-of-sleep-do-you-really-need/) | Total sleep recommendations (all ages including 0-3mo) |
-| **CDC** — [About Sleep](https://www.cdc.gov/sleep/about/index.html) | Total sleep ranges, room temperature guidance |
+| **CDC** — [About Sleep](https://www.cdc.gov/sleep/about/index.html) | Total sleep ranges |
 | **WHO** — [24-Hour Movement Guidelines](https://www.who.int/publications-detail-redirect/9789241550536) | Total sleep for infants and toddlers |
 | **Cleveland Clinic** — [Wake Windows by Age](https://health.clevelandclinic.org/wake-windows-by-age) / [Sleep Training](https://health.clevelandclinic.org/when-and-how-to-sleep-train-your-baby) | Wake window ranges (primary source), sleep training readiness |
 | **Mayo Clinic** — [Baby Sleep](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/in-depth/baby-sleep/art-20045014) / [Baby Naps](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/in-depth/baby-naps/art-20047421) | Night sleep consolidation milestones, nap guidance |
