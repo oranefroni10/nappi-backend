@@ -1,3 +1,12 @@
+"""
+APScheduler setup — three recurring jobs.
+
+Jobs:
+  - Sensor collection: every SENSOR_POLL_INTERVAL_SECONDS (sleeping babies only)
+  - Daily summary:     DAILY_SUMMARY_HOUR:00 (aggregates previous 24h, deletes raw data)
+  - Optimal stats:     DAILY_SUMMARY_HOUR:05 (recalculates weighted optimal conditions)
+"""
+
 import logging
 from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -14,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 scheduler: Optional[AsyncIOScheduler] = None
 
-# Initialize HTTP sensor source with reduced timeout for faster failure
 _data_source = HttpSensorSource(
     base_url=settings.SENSOR_API_BASE_URL,
     endpoint_map=SENSOR_TO_ENDPOINT_MAP,
@@ -22,21 +30,15 @@ _data_source = HttpSensorSource(
 )
 
 
-# Used by: start_scheduler() (IntervalTrigger every SENSOR_POLL_INTERVAL_SECONDS)
+# Used by: start_scheduler
 async def _run_baby_sensor_collection():
-    """
-    Wrapper function for the scheduled task.
-    Collects sensor data for all babies and stores in database.
-    """
+    """Collects sensor data for sleeping babies and stores in DB."""
     await collect_and_store_baby_sensor_data_task(_data_source)
 
 
-# Used by: main.py (lifespan startup)
+# Used by: main (lifespan startup)
 async def start_scheduler():
-    """
-    Initialize and start the APScheduler.
-    Schedules periodic sensor data collection for all babies.
-    """
+    """Initialize and start APScheduler."""
     global scheduler
 
     if scheduler is not None:
@@ -47,7 +49,6 @@ async def start_scheduler():
 
     scheduler = AsyncIOScheduler()
 
-    # Job 1: Sensor data collection (runs every N seconds)
     scheduler.add_job(
         _run_baby_sensor_collection,
         trigger=IntervalTrigger(seconds=settings.SENSOR_POLL_INTERVAL_SECONDS),
@@ -58,7 +59,6 @@ async def start_scheduler():
         coalesce=True,
     )
 
-    # Job 2: Daily summary generation (runs at 10:00 AM Israel time)
     scheduler.add_job(
         run_daily_summary_job,
         trigger=CronTrigger(
@@ -73,7 +73,6 @@ async def start_scheduler():
         coalesce=True,
     )
 
-    # Job 3: Optimal stats calculation (runs at 10:05 AM Israel time, after daily summary)
     scheduler.add_job(
         run_optimal_stats_job,
         trigger=CronTrigger(
@@ -97,7 +96,7 @@ async def start_scheduler():
     )
 
 
-# Used by: main.py (lifespan shutdown)
+# Used by: main (lifespan shutdown)
 async def stop_scheduler():
     global scheduler
 

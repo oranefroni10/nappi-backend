@@ -1,12 +1,4 @@
-"""
-Schedule Predictor Service - Predicts upcoming sleep windows based on patterns.
-
-This service provides:
-1. Prediction of next likely nap/sleep time based on historical patterns
-2. Optimal bedtime suggestions based on baby's data
-3. Wake window recommendations based on age
-4. Current sleep status and time since last wake
-"""
+"""Predicts sleep windows from patterns."""
 
 import logging
 from datetime import datetime, timedelta, time, date
@@ -26,7 +18,7 @@ from ..core.constants import (
 logger = logging.getLogger(__name__)
 
 
-# Used by: SchedulePredictor.predict_next_sleep() (wake window lookup)
+# Used by: SchedulePredictor.predict_next_sleep
 def get_wake_window(age_months: int) -> Tuple[float, float]:
     """Get recommended wake window range for a specific age."""
     for (min_age, max_age), window in WAKE_WINDOWS.items():
@@ -35,7 +27,7 @@ def get_wake_window(age_months: int) -> Tuple[float, float]:
     return (5.0, 6.0)  # Default for older children
 
 
-# Used by: SchedulePredictor.predict_next_sleep() (bedtime lookup)
+# Used by: SchedulePredictor.predict_next_sleep
 def get_typical_bedtime(age_months: int) -> Tuple[time, time]:
     """Get typical bedtime range for a specific age."""
     for (min_age, max_age), times in TYPICAL_BEDTIMES.items():
@@ -46,18 +38,16 @@ def get_typical_bedtime(age_months: int) -> Tuple[time, time]:
 
 @dataclass
 class SleepPrediction:
-    """Prediction for next sleep window."""
     predicted_start: datetime
     confidence: str  # "high", "medium", "low"
     prediction_type: str  # "nap", "bedtime"
-    based_on: str  # Description of what the prediction is based on
+    based_on: str
     time_until: timedelta
     wake_window_status: str  # "optimal", "approaching", "overdue"
 
 
 @dataclass
 class ScheduleRecommendation:
-    """Complete schedule recommendation."""
     next_sleep: Optional[SleepPrediction]
     optimal_bedtime: time
     current_wake_duration: Optional[timedelta]
@@ -65,52 +55,35 @@ class ScheduleRecommendation:
     suggestions: List[str]
 
 
-# Used by: get_schedule_prediction() convenience function
+# Used by: get_schedule_prediction
 class SchedulePredictor:
-    """
-    Predicts sleep schedules based on historical patterns and age-appropriate guidelines.
-    """
-
     def __init__(self):
         self.baby_manager = BabyDataManager()
 
-    # Used by: get_schedule_prediction() convenience function
+    # Used by: get_schedule_prediction
     async def predict_next_sleep(
             self,
             baby_id: int,
             current_time: Optional[datetime] = None
     ) -> Optional[ScheduleRecommendation]:
-        """
-        Predict the next sleep window for a baby.
-        
-        Args:
-            baby_id: The ID of the baby
-            current_time: Current time (defaults to now)
-            
-        Returns:
-            ScheduleRecommendation with prediction details
-        """
+        """Predict next sleep window for baby."""
         if current_time is None:
             current_time = datetime.now()
 
         logger.info(f"Predicting next sleep for baby {baby_id}")
 
-        # Get baby info for age
         baby = await self.baby_manager.get_baby_by_id(baby_id)
         if not baby:
             logger.warning(f"Baby {baby_id} not found")
             return None
 
-        # Calculate age in months
         today = current_time.date()
         age_days = (today - baby.birthdate).days
         age_months = age_days // DAYS_PER_MONTH
 
-        # Get wake window for this age
         wake_window = get_wake_window(age_months)
         typical_bedtime = get_typical_bedtime(age_months)
 
-        # Get most recent awakening to calculate current wake duration
         latest_event = await self.baby_manager.get_latest_awakening_event(baby_id)
 
         current_wake_duration = None
@@ -119,11 +92,9 @@ class SchedulePredictor:
             if isinstance(last_wake, datetime):
                 current_wake_duration = current_time - last_wake
 
-        # Get sleep patterns from recent weeks
         now = datetime.now()
         patterns = await self._get_recent_patterns(baby_id, now.month, now.year)
 
-        # Generate prediction
         prediction = self._generate_prediction(
             patterns=patterns,
             current_time=current_time,
@@ -132,7 +103,6 @@ class SchedulePredictor:
             age_months=age_months
         )
 
-        # Generate suggestions
         suggestions = self._generate_suggestions(
             prediction=prediction,
             wake_duration=current_wake_duration,
@@ -149,7 +119,7 @@ class SchedulePredictor:
             suggestions=suggestions
         )
 
-    # Used by: predict_next_sleep() (fetches and analyzes recent sleep patterns)
+    # Used by: predict_next_sleep
     async def _get_recent_patterns(
             self,
             baby_id: int,
@@ -157,7 +127,6 @@ class SchedulePredictor:
             year: int
     ) -> List[Dict[str, Any]]:
         """Get analyzed sleep patterns from recent data."""
-        # Get this month's sessions
         sessions = await self.baby_manager.get_sleep_sessions_for_month(
             baby_id=baby_id,
             year=year,
@@ -165,7 +134,6 @@ class SchedulePredictor:
         )
 
         if not sessions:
-            # Try previous month
             prev_month = month - 1 if month > 1 else 12
             prev_year = year if month > 1 else year - 1
             sessions = await self.baby_manager.get_sleep_sessions_for_month(
@@ -177,11 +145,10 @@ class SchedulePredictor:
         if not sessions:
             return []
 
-        # Analyze patterns
         patterns = analyze_sleep_patterns(sessions)
         return patterns
 
-    # Used by: predict_next_sleep() (generates prediction from patterns and wake window)
+    # Used by: predict_next_sleep
     def _generate_prediction(
             self,
             patterns: List[Dict[str, Any]],
@@ -195,11 +162,9 @@ class SchedulePredictor:
         current_hour = current_time.hour + current_time.minute / 60.0
         min_wake, max_wake = wake_window
 
-        # Method 1: Based on wake window
         if wake_duration:
             wake_hours = wake_duration.total_seconds() / 3600.0
 
-            # Determine wake window status
             if wake_hours < min_wake * WAKE_WINDOW_RECENTLY_WOKE_FACTOR:
                 wake_status = "recently_woke"
             elif wake_hours < min_wake:
@@ -211,9 +176,7 @@ class SchedulePredictor:
             else:
                 wake_status = "overdue"
 
-            # Predict based on wake window
             if wake_status in ["optimal", "approaching", "overdue"]:
-                # Baby should sleep soon
                 if wake_status == "overdue":
                     predicted_start = current_time + timedelta(minutes=PREDICTION_FALLBACK_APPROACHING_MINUTES)
                     confidence = "high"
@@ -228,7 +191,6 @@ class SchedulePredictor:
                     confidence = "medium"
                     based_on = "Within optimal wake window"
 
-                # Determine if nap or bedtime
                 predicted_hour = predicted_start.hour
                 prediction_type = "bedtime" if 17 <= predicted_hour <= 22 else "nap"
 
@@ -241,16 +203,13 @@ class SchedulePredictor:
                     wake_window_status=wake_status
                 )
 
-        # Method 2: Based on historical patterns
         if patterns:
-            # Find the next pattern that typically occurs after current time
             for pattern in patterns:
                 avg_start = pattern.get("avg_start", "")
                 if avg_start:
                     try:
                         pattern_hour = self._time_str_to_decimal(avg_start)
 
-                        # Pattern is after current time
                         if pattern_hour > current_hour:
                             hours_until = pattern_hour - current_hour
                             predicted_start = current_time + timedelta(hours=hours_until)
@@ -267,7 +226,6 @@ class SchedulePredictor:
                     except:
                         continue
 
-        # Method 3: Fallback based on time of day and age
         predicted_start = self._fallback_prediction(current_time, age_months)
         hours_until = (predicted_start - current_time).total_seconds() / 3600.0
 
@@ -280,24 +238,20 @@ class SchedulePredictor:
             wake_window_status="unknown"
         )
 
-    # Used by: _generate_prediction() (fallback when no patterns or wake data)
+    # Used by: _generate_prediction
     def _fallback_prediction(self, current_time: datetime, age_months: int) -> datetime:
-        """Generate fallback prediction based on time of day and age."""
+        """Fallback prediction from time of day and age."""
         hour = current_time.hour
 
-        # Use FALLBACK_NAP_TIMES: each entry is (before_hour, predict_hour, predict_minute)
         for before_hour, predict_hour, predict_minute in FALLBACK_NAP_TIMES:
             if hour < before_hour:
                 return current_time.replace(hour=predict_hour, minute=predict_minute, second=0, microsecond=0)
 
-        # Afternoon: Suggest late afternoon nap or early bedtime
         if hour < 17:
             if age_months < BEDTIME_PREDICTION_AGE_THRESHOLD_MONTHS:
                 return current_time.replace(hour=16, minute=0, second=0, microsecond=0)
             else:
                 return current_time.replace(hour=18, minute=30, second=0, microsecond=0)
-
-        # Evening (17+): Suggest bedtime
         else:
             bedtime_hour = 19 if age_months < BEDTIME_PREDICTION_AGE_THRESHOLD_MONTHS else 20
             target = current_time.replace(hour=bedtime_hour, minute=0, second=0, microsecond=0)
@@ -305,21 +259,19 @@ class SchedulePredictor:
                 target = target + timedelta(days=1)
             return target
 
-    # Used by: _generate_prediction() (parses pattern avg_start times)
+    # Used by: _generate_prediction
     def _time_str_to_decimal(self, time_str: str) -> float:
         """Convert HH:MM to decimal hours."""
         parts = time_str.split(":")
         return int(parts[0]) + int(parts[1]) / 60.0
 
-    # Used by: predict_next_sleep() (determines optimal bedtime for recommendation)
+    # Used by: predict_next_sleep
     def _calculate_optimal_bedtime(
             self,
             patterns: List[Dict[str, Any]],
             typical_bedtime: Tuple[time, time]
     ) -> time:
-        """Calculate optimal bedtime based on patterns."""
-
-        # Look for night sleep pattern
+        """Optimal bedtime from patterns."""
         for pattern in patterns:
             label = pattern.get("label", "").lower()
             if "night" in label:
@@ -331,13 +283,12 @@ class SchedulePredictor:
                     except:
                         pass
 
-        # Use typical bedtime middle point
         min_bed, max_bed = typical_bedtime
         avg_hour = (min_bed.hour + max_bed.hour) / 2
         avg_minute = (min_bed.minute + max_bed.minute) / 2
         return time(int(avg_hour), int(avg_minute))
 
-    # Used by: predict_next_sleep() (generates actionable text suggestions)
+    # Used by: predict_next_sleep
     def _generate_suggestions(
             self,
             prediction: Optional[SleepPrediction],
@@ -371,7 +322,6 @@ class SchedulePredictor:
                 suggestions.append(
                     f"Begin calming bedtime routine around {prediction.predicted_start.strftime('%I:%M %p')}")
 
-        # Age-specific suggestions
         if age_months <= 3:
             suggestions.append("At this age, follow baby's cues - patterns will emerge over time")
         elif age_months <= 6:
@@ -380,17 +330,9 @@ class SchedulePredictor:
         return suggestions[:3]  # Limit to 3 suggestions
 
 
-# Used by: stats.py (GET /stats/schedule, GET /stats/comprehensive)
+# Used by: stats
 async def get_schedule_prediction(baby_id: int) -> Dict[str, Any]:
-    """
-    Get schedule prediction for a baby.
-    
-    Args:
-        baby_id: The ID of the baby
-        
-    Returns:
-        Dictionary with prediction details
-    """
+    """Get schedule prediction for baby."""
     predictor = SchedulePredictor()
     recommendation = await predictor.predict_next_sleep(baby_id)
 

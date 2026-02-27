@@ -1,13 +1,4 @@
-"""
-Sleep State Manager - Tracks which babies are currently asleep.
-
-This module provides an in-memory state manager for tracking sleep sessions.
-The M5 sensors report sleep start/end events, and the scheduler uses this
-to only collect sensor data for sleeping babies.
-
-Also manages intervention cooldowns - when a parent manually overrides the
-sleep state, sensor events are ignored for a configurable period.
-"""
+"""In-memory state for tracking which babies are asleep. Cooldowns ignore sensor events after parent override."""
 
 import asyncio
 import logging
@@ -21,38 +12,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SleepSession:
-    """Represents an active sleep session for a baby."""
     baby_id: int
     start_time: datetime
 
 
 class SleepStateManager:
-    """
-    Thread-safe manager for tracking which babies are currently asleep.
-    
-    Uses an asyncio lock to ensure safe concurrent access from both
-    the API endpoints and the scheduler.
-    
-    Also manages intervention cooldowns - after a parent manually overrides
-    the sleep state, sensor events are ignored for INTERVENTION_COOLDOWN_MINUTES.
-    """
-    
+    """Tracks sleeping babies; cooldowns ignore sensor events after parent override."""
+
     def __init__(self):
         self._sleeping_babies: Dict[int, SleepSession] = {}
         self._intervention_cooldowns: Dict[int, datetime] = {}  # baby_id -> cooldown_until
         self._lock = asyncio.Lock()
     
-    # Used by: sensor_events.py (sleep-start endpoint, parent override)
+    # Used by: sensor_events.py — sleep-start endpoint, parent override
     async def start_sleep(self, baby_id: int) -> SleepSession:
-        """
-        Record that a baby has fallen asleep.
-        
-        Args:
-            baby_id: The ID of the baby that fell asleep
-            
-        Returns:
-            The created SleepSession
-        """
         async with self._lock:
             if baby_id in self._sleeping_babies:
                 logger.warning(
@@ -66,17 +39,8 @@ class SleepStateManager:
             logger.info(f"Baby {baby_id} started sleeping at {session.start_time}")
             return session
     
-    # Used by: sensor_events.py (sleep-end endpoint, parent override)
+    # Used by: sensor_events.py — sleep-end endpoint, parent override
     async def end_sleep(self, baby_id: int) -> Optional[SleepSession]:
-        """
-        Record that a baby has woken up.
-        
-        Args:
-            baby_id: The ID of the baby that woke up
-            
-        Returns:
-            The ended SleepSession if found, None if baby wasn't sleeping
-        """
         async with self._lock:
             session = self._sleeping_babies.pop(baby_id, None)
             if session is None:
@@ -88,75 +52,28 @@ class SleepStateManager:
             )
             return session
     
-    # Used by: tasks.py (sensor polling scheduler), sensor_events.py (list sleeping babies)
+    # Used by: tasks.py (sensor polling), sensor_events.py (list sleeping babies)
     async def get_sleeping_babies(self) -> List[int]:
-        """
-        Get list of all currently sleeping baby IDs.
-        
-        Returns:
-            List of baby IDs that are currently asleep
-        """
         async with self._lock:
             return list(self._sleeping_babies.keys())
     
-    # Used by: sensor_events.py (get sleep status endpoint)
+    # Used by: sensor_events.py — get sleep status endpoint
     async def get_sleep_session(self, baby_id: int) -> Optional[SleepSession]:
-        """
-        Get the sleep session for a specific baby.
-        
-        Args:
-            baby_id: The ID of the baby to check
-            
-        Returns:
-            The SleepSession if baby is sleeping, None otherwise
-        """
         async with self._lock:
             return self._sleeping_babies.get(baby_id)
     
-    # Used by: sensor_events.py (cooldown check before sleep-start/end)
+    # Used by: (not currently called externally)
     async def is_sleeping(self, baby_id: int) -> bool:
-        """
-        Check if a specific baby is currently sleeping.
-        
-        Args:
-            baby_id: The ID of the baby to check
-            
-        Returns:
-            True if baby is sleeping, False otherwise
-        """
         async with self._lock:
             return baby_id in self._sleeping_babies
     
-    # Used by: (internal utility, no external callers found)
+    # Used by: (internal utility)
     async def get_sleep_count(self) -> int:
-        """
-        Get the count of currently sleeping babies.
-        
-        Returns:
-            Number of babies currently asleep
-        """
         async with self._lock:
             return len(self._sleeping_babies)
     
-    # ============================================
-    # Intervention Cooldown Methods
-    # ============================================
-    
-    # Used by: sensor_events.py (parent override endpoint)
+    # Used by: sensor_events.py — parent override endpoint
     async def start_intervention_cooldown(self, baby_id: int) -> datetime:
-        """
-        Start an intervention cooldown period for a baby.
-        
-        During the cooldown, sensor sleep/awake events will be ignored.
-        This prevents the sensor from immediately overriding a parent's
-        manual intervention.
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            The datetime when the cooldown expires
-        """
         async with self._lock:
             cooldown_until = datetime.utcnow() + timedelta(minutes=INTERVENTION_COOLDOWN_MINUTES)
             self._intervention_cooldowns[baby_id] = cooldown_until
@@ -166,19 +83,8 @@ class SleepStateManager:
             )
             return cooldown_until
     
-    # Used by: sensor_events.py (sleep-start/end cooldown guard, cooldown status endpoint)
+    # Used by: sensor_events.py — sleep-start/end cooldown guard, cooldown status endpoint
     async def is_in_cooldown(self, baby_id: int) -> bool:
-        """
-        Check if a baby is in intervention cooldown.
-        
-        If in cooldown, sensor events should be ignored.
-        
-        Args:
-            baby_id: The ID of the baby to check
-            
-        Returns:
-            True if in cooldown (should ignore sensor events), False otherwise
-        """
         async with self._lock:
             cooldown_until = self._intervention_cooldowns.get(baby_id)
             if cooldown_until is None:
@@ -187,22 +93,12 @@ class SleepStateManager:
             if datetime.utcnow() < cooldown_until:
                 return True
             
-            # Cooldown expired, clean up
             del self._intervention_cooldowns[baby_id]
             logger.info(f"Intervention cooldown expired for baby {baby_id}")
             return False
     
-    # Used by: sensor_events.py (cooldown guard response, cooldown status endpoint)
+    # Used by: sensor_events.py — cooldown guard response, cooldown status endpoint
     async def get_cooldown_remaining(self, baby_id: int) -> Optional[int]:
-        """
-        Get the remaining cooldown time in minutes.
-        
-        Args:
-            baby_id: The ID of the baby to check
-            
-        Returns:
-            Remaining minutes if in cooldown, None otherwise
-        """
         async with self._lock:
             cooldown_until = self._intervention_cooldowns.get(baby_id)
             if cooldown_until is None:
@@ -212,21 +108,11 @@ class SleepStateManager:
             if remaining > 0:
                 return int(remaining) + 1  # Round up
             
-            # Cooldown expired
             del self._intervention_cooldowns[baby_id]
             return None
     
-    # Used by: (internal utility, no external callers found)
+    # Used by: (internal utility)
     async def clear_cooldown(self, baby_id: int) -> bool:
-        """
-        Clear the intervention cooldown for a baby (if any).
-        
-        Args:
-            baby_id: The ID of the baby
-            
-        Returns:
-            True if a cooldown was cleared, False if none existed
-        """
         async with self._lock:
             if baby_id in self._intervention_cooldowns:
                 del self._intervention_cooldowns[baby_id]
@@ -235,20 +121,12 @@ class SleepStateManager:
             return False
 
 
-# Global singleton instance
 _sleep_state_manager: Optional[SleepStateManager] = None
 
 
-# Used by: sensor_events.py (all sleep endpoints), tasks.py (sensor polling scheduler)
+# Used by: sensor_events.py, tasks.py (sensor polling scheduler)
 def get_sleep_state_manager() -> SleepStateManager:
-    """
-    Get the global SleepStateManager singleton.
-    
-    Returns:
-        The shared SleepStateManager instance
-    """
     global _sleep_state_manager
     if _sleep_state_manager is None:
         _sleep_state_manager = SleepStateManager()
     return _sleep_state_manager
-

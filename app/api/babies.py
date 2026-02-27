@@ -1,11 +1,11 @@
 """
-Baby API - Endpoints for baby-related operations.
+Baby API — CRUD for baby notes (allergies, health, preferences).
 
-Provides multi-note CRUD:
-- GET /babies/{baby_id}/notes - List all notes for a baby
-- POST /babies/{baby_id}/notes - Create a new note
-- PUT /babies/{baby_id}/notes/{note_id} - Update a note
-- DELETE /babies/{baby_id}/notes/{note_id} - Delete a note
+Routes (/babies):
+  GET    /{baby_id}/notes             - List all notes for a baby
+  POST   /{baby_id}/notes             - Create a new note
+  PUT    /{baby_id}/notes/{note_id}   - Update an existing note
+  DELETE /{baby_id}/notes/{note_id}   - Delete a note
 """
 
 import logging
@@ -21,24 +21,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/babies", tags=["babies"])
 
 
-# ============================================
-# Request/Response Models
-# ============================================
-
 class NoteCreate(BaseModel):
-    """Request to create a new note."""
     title: str
     content: str
 
 
 class NoteUpdate(BaseModel):
-    """Request to update an existing note."""
     title: str
     content: str
 
 
 class NoteResponse(BaseModel):
-    """Response containing a single note."""
     id: int
     baby_id: int
     title: str
@@ -48,35 +41,23 @@ class NoteResponse(BaseModel):
 
 
 class NotesListResponse(BaseModel):
-    """Response containing list of notes."""
     baby_id: int
     notes: List[NoteResponse]
 
 
 class DeleteResponse(BaseModel):
-    """Response for delete operation."""
     success: bool
     message: str
 
 
-# ============================================
-# Endpoints
-# ============================================
-
-# Used by: User Profile page — baby notes section (list all notes)
+# Used by: User Profile page — baby notes section (list all)
 @router.get("/{baby_id}/notes", response_model=NotesListResponse)
 async def list_notes(
     baby_id: int,
     user_id: int = Query(..., description="User ID for ownership validation")
 ):
-    """
-    Get all notes for a baby.
-    
-    Returns a list of notes ordered by creation date (newest first).
-    """
     baby_manager = BabyDataManager()
     
-    # Validate ownership
     if not await baby_manager.validate_baby_ownership(user_id, baby_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -108,32 +89,20 @@ async def create_note(
     request: NoteCreate,
     user_id: int = Query(..., description="User ID for ownership validation")
 ):
-    """
-    Create a new note for a baby.
-    """
     baby_manager = BabyDataManager()
     
-    # Validate ownership
     if not await baby_manager.validate_baby_ownership(user_id, baby_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: you don't have permission to add notes for this baby"
         )
     
-    # Validate input
     if not request.title.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Title cannot be empty"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title cannot be empty")
     
     if not request.content.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Content cannot be empty"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content cannot be empty")
     
-    # Create note
     note = await baby_manager.create_baby_note(
         baby_id=baby_id,
         title=request.title.strip(),
@@ -141,10 +110,7 @@ async def create_note(
     )
     
     if not note:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create note"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create note")
     
     logger.info(f"Created note '{note.title}' for baby {baby_id}")
     
@@ -166,32 +132,20 @@ async def update_note(
     request: NoteUpdate,
     user_id: int = Query(..., description="User ID for ownership validation")
 ):
-    """
-    Update an existing note.
-    """
     baby_manager = BabyDataManager()
     
-    # Validate ownership
     if not await baby_manager.validate_baby_ownership(user_id, baby_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: you don't have permission to update this note"
         )
     
-    # Validate input
     if not request.title.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Title cannot be empty"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title cannot be empty")
     
     if not request.content.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Content cannot be empty"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content cannot be empty")
     
-    # Update note
     note = await baby_manager.update_baby_note(
         note_id=note_id,
         baby_id=baby_id,
@@ -224,19 +178,14 @@ async def delete_note(
     note_id: int,
     user_id: int = Query(..., description="User ID for ownership validation")
 ):
-    """
-    Delete a note.
-    """
     baby_manager = BabyDataManager()
     
-    # Validate ownership
     if not await baby_manager.validate_baby_ownership(user_id, baby_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: you don't have permission to delete this note"
         )
     
-    # Delete note
     success = await baby_manager.delete_baby_note(note_id=note_id, baby_id=baby_id)
     
     if not success:

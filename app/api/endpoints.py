@@ -1,7 +1,9 @@
 """
-Dashboard endpoints - Last sleep summary and current room metrics.
+Dashboard endpoints — last sleep summary and live room conditions.
 
-These endpoints provide personalized data for the user's baby.
+Routes (no prefix):
+  GET /sleep/latest  - Last sleep session summary (duration, awakenings, avg sensors)
+  GET /room/current  - Live sensor readings; falls back to last DB reading if sensors offline
 """
 
 import asyncio
@@ -28,18 +30,9 @@ router = APIRouter()
 async def get_last_sleep_summary(
     baby_id: int = Query(..., description="Baby ID to get sleep summary for")
 ):
-    """
-    Get the most recent sleep session summary for a baby.
-    
-    Returns data from the latest awakening event including:
-    - Sleep start/end times
-    - Duration
-    - Avg temperature, avg humidity, max noise (if available)
-    """
     database = get_database()
     baby_manager = BabyDataManager()
     
-    # Validate baby exists
     babies = await baby_manager.get_babies_list()
     baby = next((b for b in babies if b.id == baby_id), None)
     
@@ -47,7 +40,6 @@ async def get_last_sleep_summary(
         raise HTTPException(status_code=404, detail=f"Baby with id {baby_id} not found")
     
     try:
-        # Get the most recent awakening event
         async with database.session() as session:
             result = await session.execute(
                 text('''
@@ -62,7 +54,6 @@ async def get_last_sleep_summary(
             row = result.mappings().first()
             
             if not row:
-                # No sleep data - return placeholder with baby name
                 now = datetime.utcnow()
                 return LastSleepSummary(
                     baby_name=baby.first_name,
@@ -74,12 +65,10 @@ async def get_last_sleep_summary(
             
             metadata = row["event_metadata"] or {}
             
-            # Parse timestamps from metadata
             sleep_started_str = metadata.get("sleep_started_at")
             awakened_str = metadata.get("awakened_at")
             duration_minutes = metadata.get("sleep_duration_minutes", 0)
             
-            # Default timestamps if missing
             ended_at = datetime.utcnow()
             started_at = ended_at - timedelta(hours=2)
             
@@ -99,11 +88,9 @@ async def get_last_sleep_summary(
                 except (ValueError, AttributeError):
                     pass
             
-            # Calculate duration if not in metadata
             if duration_minutes == 0:
                 duration_minutes = (ended_at - started_at).total_seconds() / 60
             
-            # Get awakening count for today
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             awakenings_result = await session.execute(
                 text('''
@@ -116,7 +103,6 @@ async def get_last_sleep_summary(
             )
             awakenings_count = awakenings_result.scalar() or 0
             
-            # Get room averages from sensor data during the nap
             sensor_result = await session.execute(
                 text('''
                     SELECT
@@ -157,21 +143,15 @@ async def get_last_sleep_summary(
 async def get_current_room_metrics(
     baby_id: int = Query(..., description="Baby ID to get room metrics for")
 ):
-    """
-    Get current room conditions by fetching live sensor data on-demand.
-
-    Falls back to the last DB reading if sensors are unreachable.
-    """
+    """Fetches live sensor data; falls back to last DB reading if sensors unreachable."""
     baby_manager = BabyDataManager()
 
-    # Validate baby exists
     babies = await baby_manager.get_babies_list()
     baby = next((b for b in babies if b.id == baby_id), None)
 
     if not baby:
         raise HTTPException(status_code=404, detail=f"Baby with id {baby_id} not found")
 
-    # Try live sensor fetch first
     data_source = HttpSensorSource(
         base_url=settings.SENSOR_API_BASE_URL,
         endpoint_map=SENSOR_TO_ENDPOINT_MAP,
@@ -184,7 +164,6 @@ async def get_current_room_metrics(
         return_exceptions=True,
     )
 
-    # Map results to DB column names for consistent field naming
     live_data = {}
     for sensor_name, result in zip(sensor_names, results):
         if result and not isinstance(result, Exception) and isinstance(result, dict) and "value" in result:
@@ -200,7 +179,6 @@ async def get_current_room_metrics(
             measured_at=datetime.utcnow(),
         )
 
-    # Fallback: use last DB reading
     logger.warning(f"Live sensors unreachable for baby {baby_id}, falling back to last DB reading")
     try:
         last_readings = await baby_manager.get_last_sensor_readings(baby_id)

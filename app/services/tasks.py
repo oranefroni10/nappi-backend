@@ -1,3 +1,5 @@
+"""Scheduled task — collects sensor data for sleeping babies and checks alert thresholds."""
+
 import asyncio
 import logging
 from typing import Dict, Any, List
@@ -11,24 +13,17 @@ from app.db.models import Babies
 logger = logging.getLogger(__name__)
 
 
-# Used by: scheduler.py (_run_baby_sensor_collection, called every SENSOR_POLL_INTERVAL_SECONDS)
+# Used by: scheduler.py — called every SENSOR_POLL_INTERVAL_SECONDS
 async def collect_and_store_baby_sensor_data_task(
     data_source: HttpSensorSource
 ) -> Dict[str, Any]:
-    """
-    Collect sensor data only for babies that are currently asleep.
-    
-    This task is called periodically by the scheduler. It checks the
-    SleepStateManager for sleeping babies and only collects sensor
-    data for those babies.
-    """
+    """Collect sensor data only for sleeping babies."""
     logger.debug("Starting baby sensor data collection task...")
     
     baby_manager = BabyDataManager()
     sleep_state = get_sleep_state_manager()
     
     try:
-        # 1. Get list of currently sleeping babies
         sleeping_baby_ids = await sleep_state.get_sleeping_babies()
         
         if not sleeping_baby_ids:
@@ -40,7 +35,6 @@ async def collect_and_store_baby_sensor_data_task(
                 "message": "No babies currently sleeping"
             }
         
-        # 2. Get baby details from database for sleeping babies only
         all_babies = await baby_manager.get_babies_list()
         sleeping_babies: List[Babies] = [
             baby for baby in all_babies if baby.id in sleeping_baby_ids
@@ -59,16 +53,13 @@ async def collect_and_store_baby_sensor_data_task(
         
         logger.info(f"Collecting sensor data for {len(sleeping_babies)} sleeping baby/babies")
         
-        # 3. Process sleeping babies in PARALLEL for maximum speed
         baby_tasks = [
             asyncio.create_task(_process_single_baby(baby, data_source, baby_manager))
             for baby in sleeping_babies
         ]
         
-        # Wait for all babies to complete (timeout handled per-sensor in data_miner)
         results = await asyncio.gather(*baby_tasks, return_exceptions=True)
         
-        # 4. Count successes and failures
         success_count = sum(1 for r in results if r is True)
         failed_count = sum(1 for r in results if r is not True)
         
@@ -89,7 +80,7 @@ async def collect_and_store_baby_sensor_data_task(
         return {"success": 0, "failed": 0, "total": 0, "error": str(e)}
 
 
-# Used by: collect_and_store_baby_sensor_data_task() (processes one baby in parallel)
+# Used by: collect_and_store_baby_sensor_data_task() — processes one baby in parallel
 async def _process_single_baby(
     baby: Babies,
     data_source: HttpSensorSource,
@@ -99,21 +90,17 @@ async def _process_single_baby(
     try:
         logger.debug(f"Collecting sensor data for baby {baby.id} ({baby.first_name})")
         
-        # Fetch all sensor data concurrently (temperature, humidity, noise)
         sensor_names = list(SENSOR_TO_ENDPOINT_MAP.keys())
         sensor_tasks = [
             asyncio.create_task(data_source.get_sensor_data(sensor, baby.id))
             for sensor in sensor_names
         ]
         
-        # Wait for all sensors (returns None for failed sensors)
         sensor_results = await asyncio.gather(*sensor_tasks, return_exceptions=True)
         
-        # Build the data dictionary mapping sensor data to DB columns
         sensor_data = {}
         for sensor_name, result in zip(sensor_names, sensor_results):
             if result and not isinstance(result, Exception):
-                # Map sensor name to DB column name
                 db_column = SENSOR_TO_DB_COLUMN_MAP.get(sensor_name)
                 if db_column and isinstance(result, dict) and "value" in result:
                     sensor_data[db_column] = result["value"]
@@ -127,9 +114,7 @@ async def _process_single_baby(
                     f"{result if isinstance(result, Exception) else 'No data'}"
                 )
         
-        # Only insert if we got at least some sensor data
         if sensor_data:
-            # Insert into database
             inserted = await baby_manager.insert_sleep_realtime_data(
                 baby_id=baby.id,
                 **sensor_data
@@ -141,7 +126,6 @@ async def _process_single_baby(
                     f"{len(sensor_data)}/{len(sensor_names)} sensors"
                 )
                 
-                # Check thresholds and create alerts if needed
                 try:
                     alert_service = get_alert_service()
                     await alert_service.check_thresholds(

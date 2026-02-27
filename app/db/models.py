@@ -1,5 +1,7 @@
-# Generated from database schema - DO NOT EDIT MANUALLY
-# Run 'python generate_models.py' to regenerate
+"""Pydantic models mirroring the Nappi database schema."""
+
+# Generated from database schema — regenerate with 'python generate_models.py'
+# WARNING: regeneration overwrites this file — re-add manual additions from the bottom section
 
 from pydantic import BaseModel, Field
 from datetime import datetime, date
@@ -7,11 +9,8 @@ from typing import Optional
 from decimal import Decimal
 
 
-# Used by: alert_service.py (raw SQL mirrors this schema), alerts.py endpoints
+# Not currently imported — alert_service.py uses its own Alert dataclass
 class Alerts(BaseModel):
-    """
-    Represents the Nappi.alerts table
-    """
     id: Optional[int] = None
     baby_id: int
     user_id: int
@@ -31,11 +30,8 @@ class Alerts(BaseModel):
         }
 
 
-# Used by: babies_data.py (DB queries for awakening data)
+# Used by: babies_data.py (awakening data)
 class AwakeningEvents(BaseModel):
-    """
-    Represents the Nappi.awakening_events table
-    """
     id: int
     baby_id: Optional[int] = None
     event_metadata: Optional[dict] = None
@@ -48,11 +44,8 @@ class AwakeningEvents(BaseModel):
         }
 
 
-# Used by: babies_data.py, tasks.py (sensor polling), auth_manager.py (signup/login)
+# Used by: babies_data.py, tasks.py, auth_manager.py
 class Babies(BaseModel):
-    """
-    Represents the Nappi.babies table
-    """
     id: int
     first_name: str
     last_name: str
@@ -68,11 +61,8 @@ class Babies(BaseModel):
         }
 
 
-# Used by: babies_data.py (DB queries), correlation_analyzer.py, chat_service.py
+# Used by: babies_data.py
 class Correlations(BaseModel):
-    """
-    Represents the Nappi.correlations table
-    """
     id: int
     time: date
     parameters: dict
@@ -87,11 +77,8 @@ class Correlations(BaseModel):
         }
 
 
-# Used by: babies_data.py (DB queries), daily_summary.py (generation), trend_analyzer.py
+# Used by: babies_data.py
 class DailySummary(BaseModel):
-    """
-    Represents the Nappi.daily_summary table
-    """
     id: int
     baby_id: int
     avg_humidity: Optional[float] = None
@@ -110,11 +97,8 @@ class DailySummary(BaseModel):
         }
 
 
-# Used by: babies_data.py (DB queries for optimal environment stats)
+# Used by: babies_data.py (optimal environment stats)
 class OptimalStats(BaseModel):
-    """
-    Represents the Nappi.optimal_stats table
-    """
     id: int
     baby_id: Optional[int] = None
     temperature: Optional[float] = None
@@ -129,11 +113,8 @@ class OptimalStats(BaseModel):
         }
 
 
-# Used by: push_service.py (Web Push subscription management, raw SQL)
+# Not currently imported — push_service.py uses raw SQL
 class PushSubscriptions(BaseModel):
-    """
-    Represents the Nappi.push_subscriptions table
-    """
     id: Optional[int] = None
     user_id: int
     endpoint: str
@@ -150,11 +131,8 @@ class PushSubscriptions(BaseModel):
         }
 
 
-# Used by: babies_data.py (sensor data queries), daily_summary.py (daily averages)
+# Used by: babies_data.py
 class SleepRealtimeData(BaseModel):
-    """
-    Represents the Nappi.sleep_realtime_data table
-    """
     id: int
     baby_id: int
     datetime: datetime
@@ -170,11 +148,8 @@ class SleepRealtimeData(BaseModel):
         }
 
 
-# Used by: auth_manager.py (login/signup, aliased as User)
+# Used by: auth_manager.py (aliased as User)
 class Users(BaseModel):
-    """
-    Represents the Nappi.users table
-    """
     id: int
     username: str
     password: str
@@ -190,15 +165,12 @@ class Users(BaseModel):
         }
 
 
-# =============================================================================
 # MANUAL ADDITIONS - Keep these after regenerating models
-# =============================================================================
-
-# Used by: auth_manager.py (backward-compatible alias for Users)
+# Used by: auth_manager.py
 User = Users
 
 
-# Used by: auth.py (POST /auth/login, POST /auth/signup response)
+# Used by: auth.py (login/signup response)
 class BabyResponse(BaseModel):
     """Baby info returned in API responses."""
     id: int
@@ -213,12 +185,9 @@ class BabyResponse(BaseModel):
         }
 
 
-# Used by: babies.py (GET/POST/DELETE /babies/notes), babies_data.py (note queries)
+# Used by: babies.py, babies_data.py
 class BabyNote(BaseModel):
-    """
-    Represents an individual note about a baby.
-    Used for allergies, health conditions, preferences, etc.
-    """
+    """Notes: allergies, health, preferences."""
     id: int
     baby_id: int
     title: str

@@ -1,12 +1,4 @@
-"""
-Alert Service - Manages alerts and real-time notifications.
-
-This service handles:
-- Creating and storing alerts in the database
-- Broadcasting alerts via SSE to connected clients
-- Checking environmental thresholds
-- Sending web push notifications
-"""
+"""Alert service: creates, stores, broadcasts alerts via SSE and push."""
 
 import asyncio
 import json
@@ -42,7 +34,6 @@ class AlertSeverity(str, Enum):
 
 @dataclass
 class Alert:
-    """Represents an alert."""
     id: Optional[int]
     baby_id: int
     user_id: int
@@ -53,7 +44,7 @@ class Alert:
     metadata: Optional[Dict[str, Any]] = None
     read: bool = False
     created_at: Optional[datetime] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         if data["created_at"]:
@@ -61,7 +52,6 @@ class Alert:
         return data
 
 
-# Alert thresholds — imported from centralized constants
 TEMP_HIGH = TEMP_ALERT_HIGH_C
 TEMP_LOW = TEMP_ALERT_LOW_C
 HUMIDITY_HIGH = HUMIDITY_ALERT_HIGH_PCT
@@ -70,15 +60,10 @@ NOISE_HIGH = NOISE_ALERT_HIGH_DB
 
 
 class SSEManager:
-    """
-    Manages Server-Sent Events connections.
-    Each connected client has a queue that receives alerts.
-    """
-    
     def __init__(self):
-        self._queues: Dict[int, Set[asyncio.Queue]] = {}  # user_id -> set of queues
+        self._queues: Dict[int, Set[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
-    
+
     # Used by: alerts.py (SSE stream endpoint - client connects)
     async def subscribe(self, user_id: int) -> asyncio.Queue:
         """Subscribe a client to receive alerts."""
@@ -89,7 +74,7 @@ class SSEManager:
             self._queues[user_id].add(queue)
             logger.info(f"SSE client subscribed for user {user_id}")
         return queue
-    
+
     # Used by: alerts.py (SSE stream endpoint - client disconnects)
     async def unsubscribe(self, user_id: int, queue: asyncio.Queue):
         """Unsubscribe a client."""
@@ -99,8 +84,8 @@ class SSEManager:
                 if not self._queues[user_id]:
                     del self._queues[user_id]
             logger.info(f"SSE client unsubscribed for user {user_id}")
-    
-    # Used by: AlertService.create_alert() (pushes alert to all connected SSE clients)
+
+    # Used by: AlertService.create_alert()
     async def broadcast(self, user_id: int, alert: Alert):
         """Broadcast an alert to all connected clients for a user."""
         async with self._lock:
@@ -110,14 +95,13 @@ class SSEManager:
                     await queue.put(alert)
                 except Exception as e:
                     logger.error(f"Failed to broadcast alert to queue: {e}")
-    
-    # Used by: (internal utility, no external callers found)
+
+    # Used by: (internal utility)
     def get_connected_count(self, user_id: int) -> int:
         """Get number of connected clients for a user."""
         return len(self._queues.get(user_id, set()))
 
 
-# Global SSE manager singleton
 _sse_manager: Optional[SSEManager] = None
 
 
@@ -131,17 +115,12 @@ def get_sse_manager() -> SSEManager:
 
 
 class AlertService:
-    """
-    Service for managing alerts.
-    Handles database operations, SSE broadcasting, and push notifications.
-    """
-    
     def __init__(self):
         self.database = get_database()
         self.sse_manager = get_sse_manager()
-        self._alert_cooldowns: Dict[Tuple[int, str], datetime] = {}  # (baby_id, alert_type) → cooldown_until
+        self._alert_cooldowns: Dict[Tuple[int, str], datetime] = {}
 
-    # Used by: self.check_thresholds() (prevents repeated alerts for same condition)
+    # Used by: self.check_thresholds()
     def _is_alert_on_cooldown(self, baby_id: int, alert_type: str) -> bool:
         """Check if an alert type is on cooldown for a baby."""
         key = (baby_id, alert_type)
@@ -150,13 +129,13 @@ class AlertService:
             return True
         return False
 
-    # Used by: self.check_thresholds() (sets cooldown after alert is sent)
+    # Used by: self.check_thresholds()
     def _set_alert_cooldown(self, baby_id: int, alert_type: str) -> None:
         """Set cooldown for an alert type for a baby."""
         key = (baby_id, alert_type)
         self._alert_cooldowns[key] = datetime.utcnow() + timedelta(minutes=ALERT_COOLDOWN_MINUTES)
-    
-    # Used by: self.check_thresholds(), self.create_awakening_alert() (user lookup when user_id not provided)
+
+    # Used by: self.check_thresholds(), self.create_awakening_alert()
     async def get_user_id_for_baby(self, baby_id: int) -> Optional[int]:
         """Get the user_id who owns this baby."""
         try:
@@ -170,8 +149,8 @@ class AlertService:
         except Exception as e:
             logger.error(f"Failed to get user_id for baby {baby_id}: {e}")
             return None
-    
-    # Used by: self.check_thresholds() (sensor threshold alerts), self.create_awakening_alert() (baby woke up alert)
+
+    # Used by: self.check_thresholds(), self.create_awakening_alert()
     async def create_alert(
         self,
         baby_id: int,
@@ -183,32 +162,14 @@ class AlertService:
         metadata: Optional[Dict[str, Any]] = None,
         send_push: bool = True
     ) -> Optional[Alert]:
-        """
-        Create a new alert.
-        - Stores in database
-        - Broadcasts via SSE to connected clients
-        - Optionally sends web push notification
-        
-        Args:
-            baby_id: The ID of the baby
-            user_id: The ID of the user to alert
-            alert_type: Type of alert (awakening, temperature, etc.)
-            title: Alert title
-            message: Alert message
-            severity: Alert severity (info, warning, critical)
-            metadata: Additional metadata as JSON
-            send_push: Whether to send a push notification
-            
-        Returns:
-            The created Alert, or None if failed
-        """
+        """Create and store alert, broadcast via SSE, optionally send push."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
                     text('''
-                        INSERT INTO "Nappi"."alerts" 
+                        INSERT INTO "Nappi"."alerts"
                         (baby_id, user_id, type, title, message, severity, metadata, read, created_at)
-                        VALUES (:baby_id, :user_id, :type, :title, :message, :severity, 
+                        VALUES (:baby_id, :user_id, :type, :title, :message, :severity,
                                 CAST(:metadata AS jsonb), FALSE, NOW())
                         RETURNING id, created_at
                     '''),
@@ -224,7 +185,7 @@ class AlertService:
                 )
                 await session.commit()
                 row = result.fetchone()
-                
+
                 if row:
                     alert = Alert(
                         id=row[0],
@@ -238,23 +199,21 @@ class AlertService:
                         read=False,
                         created_at=row[1]
                     )
-                    
+
                     logger.info(f"Created alert {alert.id} for user {user_id}: {title}")
-                    
-                    # Broadcast via SSE to connected clients
+
                     await self.sse_manager.broadcast(user_id, alert)
-                    
-                    # Send push notification if enabled
+
                     if send_push:
                         await self._send_push_notification(user_id, alert)
-                    
+
                     return alert
                 return None
-                
+
         except Exception as e:
             logger.error(f"Failed to create alert: {e}")
             return None
-    
+
     # Used by: alerts.py (GET alerts list endpoint)
     async def get_alerts_for_user(
         self,
@@ -263,22 +222,11 @@ class AlertService:
         offset: int = 0,
         unread_only: bool = False
     ) -> List[Alert]:
-        """
-        Get alerts for a user with pagination.
-        
-        Args:
-            user_id: The user ID
-            limit: Maximum number of alerts to return
-            offset: Number of alerts to skip
-            unread_only: If True, only return unread alerts
-            
-        Returns:
-            List of Alert objects
-        """
+        """Get paginated alerts for a user."""
         try:
             async with self.database.session() as session:
                 query = '''
-                    SELECT id, baby_id, user_id, type, title, message, 
+                    SELECT id, baby_id, user_id, type, title, message,
                            severity, metadata, read, created_at
                     FROM "Nappi"."alerts"
                     WHERE user_id = :user_id
@@ -286,13 +234,13 @@ class AlertService:
                 if unread_only:
                     query += ' AND read = FALSE'
                 query += ' ORDER BY created_at DESC LIMIT :limit OFFSET :offset'
-                
+
                 result = await session.execute(
                     text(query),
                     {"user_id": user_id, "limit": limit, "offset": offset}
                 )
                 rows = result.mappings().all()
-                
+
                 return [
                     Alert(
                         id=row["id"],
@@ -311,7 +259,7 @@ class AlertService:
         except Exception as e:
             logger.error(f"Failed to get alerts for user {user_id}: {e}")
             return []
-    
+
     # Used by: alerts.py (GET unread count endpoint)
     async def get_unread_count(self, user_id: int) -> int:
         """Get the count of unread alerts for a user."""
@@ -329,8 +277,8 @@ class AlertService:
         except Exception as e:
             logger.error(f"Failed to get unread count for user {user_id}: {e}")
             return 0
-    
-    # Used by: alerts.py (PATCH mark single alert as read endpoint)
+
+    # Used by: alerts.py (POST mark single alert as read endpoint)
     async def mark_as_read(self, alert_id: int, user_id: int) -> bool:
         """Mark a single alert as read."""
         try:
@@ -349,10 +297,10 @@ class AlertService:
         except Exception as e:
             logger.error(f"Failed to mark alert {alert_id} as read: {e}")
             return False
-    
+
     # Used by: alerts.py (POST mark all alerts as read endpoint)
     async def mark_all_as_read(self, user_id: int) -> int:
-        """Mark all alerts as read for a user. Returns count of updated alerts."""
+        """Mark all alerts as read for a user."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -368,10 +316,10 @@ class AlertService:
         except Exception as e:
             logger.error(f"Failed to mark all alerts as read for user {user_id}: {e}")
             return 0
-    
+
     # Used by: alerts.py (DELETE alerts endpoint)
     async def delete_alerts(self, alert_ids: List[int], user_id: int) -> int:
-        """Delete alerts by IDs for a user. Returns count of deleted alerts."""
+        """Delete alerts by IDs for a user."""
         try:
             async with self.database.session() as session:
                 result = await session.execute(
@@ -387,7 +335,7 @@ class AlertService:
             logger.error(f"Failed to delete alerts for user {user_id}: {e}")
             return 0
 
-    # Used by: tasks.py (sensor polling - checks thresholds after each reading)
+    # Used by: tasks.py (sensor polling)
     async def check_thresholds(
         self,
         baby_id: int,
@@ -396,28 +344,15 @@ class AlertService:
         noise_db: Optional[float] = None,
         user_id: Optional[int] = None
     ) -> List[Alert]:
-        """
-        Check sensor values against thresholds and create alerts if exceeded.
-        
-        Args:
-            baby_id: The baby ID
-            temperature: Current temperature in °C
-            humidity: Current humidity in %
-            noise_db: Current noise level in dB
-            user_id: The user ID to alert (optional - will lookup from baby_id if not provided)
-            
-        Returns:
-            List of created alerts (if any)
-        """
-        # Get user_id if not provided
+        """Check sensor values against thresholds and create alerts if exceeded."""
         if user_id is None:
             user_id = await self.get_user_id_for_baby(baby_id)
             if user_id is None:
                 logger.warning(f"No user found for baby {baby_id}, skipping threshold alerts")
                 return []
-        
+
         alerts = []
-        noise = noise_db  # Rename for internal use
+        noise = noise_db
 
         if temperature is not None:
             if temperature > TEMP_HIGH:
@@ -496,8 +431,8 @@ class AlertService:
                         alerts.append(alert)
 
         return alerts
-    
-    # Used by: sensor_events.py (sleep-end endpoint - notifies parent baby woke up)
+
+    # Used by: sensor_events.py (sleep-end endpoint)
     async def create_awakening_alert(
         self,
         baby_id: int,
@@ -506,36 +441,21 @@ class AlertService:
         last_sensor_readings: Optional[Dict[str, Any]] = None,
         user_id: Optional[int] = None
     ) -> Optional[Alert]:
-        """
-        Create an alert when a baby wakes up.
-        
-        Args:
-            baby_id: The baby ID
-            sleep_duration_minutes: How long the baby slept
-            awakened_at: When the baby woke up
-            last_sensor_readings: Last sensor data before wake
-            user_id: The user ID to alert (optional - will lookup from baby_id if not provided)
-            
-        Returns:
-            The created Alert, or None if failed
-        """
-        # Get user_id if not provided
+        """Create an alert when a baby wakes up."""
         if user_id is None:
             user_id = await self.get_user_id_for_baby(baby_id)
             if user_id is None:
                 logger.warning(f"No user found for baby {baby_id}, skipping awakening alert")
                 return None
-        # Format duration nicely
         hours = int(sleep_duration_minutes // 60)
         minutes = int(sleep_duration_minutes % 60)
         if hours > 0:
             duration_str = f"{hours}h {minutes}m"
         else:
             duration_str = f"{minutes} minutes"
-        
-        # Format time
+
         time_str = awakened_at.strftime("%H:%M")
-        
+
         metadata = {
             "sleep_duration_minutes": sleep_duration_minutes,
             "awakened_at": awakened_at.isoformat()
@@ -545,7 +465,7 @@ class AlertService:
                 k: v.isoformat() if isinstance(v, datetime) else v
                 for k, v in last_sensor_readings.items()
             }
-        
+
         return await self.create_alert(
             baby_id=baby_id,
             user_id=user_id,
@@ -555,8 +475,8 @@ class AlertService:
             severity=AlertSeverity.INFO,
             metadata=metadata
         )
-    
-    # Used by: self.create_alert() (sends web push after DB insert + SSE broadcast)
+
+    # Used by: self.create_alert()
     async def _send_push_notification(self, user_id: int, alert: Alert):
         """Send a web push notification for an alert."""
         try:
@@ -574,11 +494,10 @@ class AlertService:
             logger.warning(f"Failed to send push notification for alert {alert.id}: {e}")
 
 
-# Singleton instance
 _alert_service: Optional[AlertService] = None
 
 
-# Used by: sensor_events.py (awakening alert), tasks.py (threshold alerts), alerts.py (all alert CRUD endpoints)
+# Used by: sensor_events.py, tasks.py, alerts.py
 def get_alert_service() -> AlertService:
     """Get the alert service singleton."""
     global _alert_service

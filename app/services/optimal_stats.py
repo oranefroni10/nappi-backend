@@ -1,11 +1,4 @@
-"""
-Optimal Stats Service - Calculates optimal environmental conditions for each baby.
-
-This service runs daily to calculate weighted averages of environmental parameters,
-where weights are based on sleep quality (fewer awakenings = higher weight).
-
-The optimal conditions represent what worked best historically for each baby.
-"""
+"""Calculates optimal environmental conditions per baby from weighted daily summaries."""
 
 import logging
 from typing import Dict, Any, List, Optional
@@ -18,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OptimalStatsResult:
-    """Result of optimal stats calculation for a baby."""
     baby_id: int
     stats_id: Optional[int]
     temperature: Optional[float]
@@ -35,26 +27,7 @@ def calculate_weight(
     noon_awakes: int,
     night_awakes: int
 ) -> float:
-    """
-    Calculate weight for a day based on awakening counts.
-    
-    Formula: weight = 1 / (1 + total_awakenings)
-    
-    This gives:
-    - 0 awakenings -> weight 1.0 (best)
-    - 1 awakening  -> weight 0.5
-    - 2 awakenings -> weight 0.33
-    - 3 awakenings -> weight 0.25
-    - etc.
-    
-    Args:
-        morning_awakes: Count of morning awakenings
-        noon_awakes: Count of noon awakenings
-        night_awakes: Count of night awakenings
-        
-    Returns:
-        Weight value between 0 and 1
-    """
+    """Weight = 1/(1+total_awakenings); 0 awakes → 1.0, 1 → 0.5, 2 → 0.33, etc."""
     total_awakes = (morning_awakes or 0) + (noon_awakes or 0) + (night_awakes or 0)
     return 1.0 / (1.0 + total_awakes)
 
@@ -64,61 +37,38 @@ def calculate_weighted_average(
     values: List[float],
     weights: List[float]
 ) -> Optional[float]:
-    """
-    Calculate weighted average of values.
-    
-    Formula: Σ(value × weight) / Σ(weight)
-    
-    Args:
-        values: List of values to average
-        weights: List of corresponding weights
-        
-    Returns:
-        Weighted average, or None if no valid data
-    """
+    """Σ(value×weight)/Σ(weight)."""
     if not values or not weights or len(values) != len(weights):
         return None
-    
+
     # Filter out None values and their corresponding weights
     valid_pairs = [
         (v, w) for v, w in zip(values, weights)
         if v is not None and w is not None
     ]
-    
+
     if not valid_pairs:
         return None
-    
+
     total_weighted = sum(v * w for v, w in valid_pairs)
     total_weight = sum(w for _, w in valid_pairs)
-    
+
     if total_weight == 0:
         return None
-    
+
     return round(total_weighted / total_weight, 2)
 
 
 # Used by: run_optimal_stats_job() (calculates optimal stats for a single baby)
 async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
-    """
-    Calculate optimal stats for a single baby using all historical data.
-    
-    Uses weighted averages where weight is inversely proportional to
-    the number of awakenings (fewer awakenings = better conditions).
-    
-    Args:
-        baby_id: The ID of the baby
-        
-    Returns:
-        OptimalStatsResult with calculated optimal values
-    """
+    """Weighted averages where weight ∝ 1/awakenings (fewer awakenings = higher weight)."""
     logger.info(f"Calculating optimal stats for baby {baby_id}")
-    
+
     baby_manager = BabyDataManager()
-    
+
     try:
-        # Fetch all daily summaries for this baby
         summaries = await baby_manager.get_all_daily_summaries(baby_id)
-        
+
         if not summaries:
             logger.warning(f"No daily summaries found for baby {baby_id}")
             return OptimalStatsResult(
@@ -132,15 +82,14 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
                 success=False,
                 error="No historical data available"
             )
-        
+
         logger.info(f"Found {len(summaries)} daily summaries for baby {baby_id}")
-        
-        # Calculate weights for each day
+
         weights = []
         temps = []
         humidities = []
         noises = []
-        
+
         for summary in summaries:
             weight = calculate_weight(
                 morning_awakes=summary.get("morning_awakes_sum") or 0,
@@ -151,25 +100,23 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
             temps.append(summary.get("avg_temp"))
             humidities.append(summary.get("avg_humidity"))
             noises.append(summary.get("avg_noise"))
-        
-        # Calculate weighted averages
+
         optimal_temp = calculate_weighted_average(temps, weights)
         optimal_humidity = calculate_weighted_average(humidities, weights)
         optimal_noise = calculate_weighted_average(noises, weights)
-        
+
         logger.info(
             f"Calculated optimal stats for baby {baby_id}: "
             f"temp={optimal_temp}, humidity={optimal_humidity}, noise={optimal_noise}"
         )
-        
-        # Upsert optimal stats
+
         stats_id = await baby_manager.upsert_optimal_stats(
             baby_id=baby_id,
             temperature=optimal_temp,
             humidity=optimal_humidity,
             noise=optimal_noise
         )
-        
+
         if stats_id is None:
             return OptimalStatsResult(
                 baby_id=baby_id,
@@ -182,7 +129,7 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
                 success=False,
                 error="Failed to save optimal stats"
             )
-        
+
         return OptimalStatsResult(
             baby_id=baby_id,
             stats_id=stats_id,
@@ -192,7 +139,7 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
             days_analyzed=len(summaries),
             success=True
         )
-        
+
     except Exception as e:
         logger.error(f"Error calculating optimal stats for baby {baby_id}: {e}", exc_info=True)
         return OptimalStatsResult(
@@ -209,24 +156,16 @@ async def calculate_optimal_stats(baby_id: int) -> OptimalStatsResult:
 
 # Used by: scheduler.py (CronTrigger at 10:05 AM Israel time, after daily summary)
 async def run_optimal_stats_job() -> Dict[str, Any]:
-    """
-    Main job function to calculate optimal stats for all babies.
-    
-    This should be scheduled to run after the daily summary job.
-    
-    Returns:
-        Dictionary with job results
-    """
+    """Calculate optimal stats for all babies (runs after daily summary job)."""
     logger.info("=" * 60)
     logger.info("Starting optimal stats calculation job")
     logger.info("=" * 60)
-    
+
     baby_manager = BabyDataManager()
-    
+
     try:
-        # Get all babies
         babies = await baby_manager.get_babies_list()
-        
+
         if not babies:
             logger.warning("No babies found in database")
             return {
@@ -234,15 +173,15 @@ async def run_optimal_stats_job() -> Dict[str, Any]:
                 "babies_processed": 0,
                 "results": []
             }
-        
+
         logger.info(f"Processing {len(babies)} babies")
-        
+
         results = []
         success_count = 0
-        
+
         for baby in babies:
             result = await calculate_optimal_stats(baby.id)
-            
+
             results.append({
                 "baby_id": baby.id,
                 "baby_name": baby.first_name,
@@ -254,23 +193,23 @@ async def run_optimal_stats_job() -> Dict[str, Any]:
                 "optimal_noise": result.noise,
                 "error": result.error
             })
-            
+
             if result.success:
                 success_count += 1
-        
+
         logger.info("=" * 60)
         logger.info(
             f"Optimal stats job complete: {success_count}/{len(babies)} babies processed successfully"
         )
         logger.info("=" * 60)
-        
+
         return {
             "success": True,
             "babies_processed": len(babies),
             "babies_succeeded": success_count,
             "results": results
         }
-        
+
     except Exception as e:
         logger.error(f"Fatal error in optimal stats job: {e}", exc_info=True)
         return {
@@ -278,4 +217,3 @@ async def run_optimal_stats_job() -> Dict[str, Any]:
             "error": str(e),
             "results": []
         }
-

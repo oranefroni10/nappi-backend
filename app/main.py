@@ -1,3 +1,5 @@
+"""FastAPI app — lifespan, CORS, router registration."""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -19,17 +21,15 @@ logging.basicConfig(
 )
 
 
-# Used by: FastAPI app startup/shutdown (initializes DB, scheduler; tears down on exit)
+# Used by: FastAPI lifespan — init DB + scheduler on startup, tear down on shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     db = get_database()
     await db.connect(settings.DATABASE_URL)
     await start_scheduler()
     
     yield
     
-    # Shutdown
     await stop_scheduler()
     await db.disconnect()
 
@@ -46,7 +46,7 @@ if settings.CORS_EXTRA_ORIGINS:
     cors_origins.extend([o.strip() for o in settings.CORS_EXTRA_ORIGINS.split(",") if o.strip()])
 
 def allow_origin(origin: str) -> bool:
-    """Check if origin is allowed — includes all Vercel preview URLs."""
+    """Also allows all Vercel preview URLs."""
     if origin in cors_origins:
         return True
     if origin.endswith(".vercel.app"):
@@ -70,4 +70,3 @@ app.include_router(alerts_router)
 app.include_router(push_router)
 app.include_router(babies_router)
 app.include_router(chat_router)
-
