@@ -190,7 +190,13 @@ class SchedulePredictor:
                     predicted_start = current_time + time_to_max
                     confidence = "medium"
                     based_on = "Within optimal wake window"
-
+                # If baby is under 12 months, clamp predicted_start to the next upcoming nap
+                if age_months < BEDTIME_PREDICTION_AGE_THRESHOLD_MONTHS:
+                    for before_hour, nap_hour, nap_minute in FALLBACK_NAP_TIMES:
+                        nap_time = current_time.replace(hour=nap_hour, minute=nap_minute, second=0, microsecond=0)
+                        if nap_time > current_time and nap_time < predicted_start:
+                            predicted_start = nap_time
+                            break
                 predicted_hour = predicted_start.hour
                 prediction_type = "bedtime" if 17 <= predicted_hour <= 22 else "nap"
 
